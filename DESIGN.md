@@ -282,6 +282,12 @@ Design goals: **100% implemented, zero gaps.**
 - ⏳ Drop-in tool replacement for memory-lancedb
 - ⏳ L1 injection for high-relevance matches
 
+### Phase 2 Backlog (from user feedback)
+
+- ⏳ **Memory cleanup / lifecycle management** — Add `memory_forget` tool and retention policies (TTL / max count / age-based expiry). Currently memories accumulate indefinitely with no way to selectively delete. The `active_count` and `created_at` fields are already stored but unused for maintenance.
+- ⏳ **LanceDB compaction** — Call `table.optimize()` periodically to compact single-row fragments and prune old versions. The current delete-then-add update pattern creates ~8 new fragments and ~14 new versions per session. A post-extraction `optimize({ cleanupOlderThan })` call would mitigate this with minimal code change.
+- ⏳ **Retrieval scaling** — Add vector index (IVF_PQ or HNSW) and scalar index on `category` when memory count exceeds a threshold. Current flat scan is adequate for <10K rows but degrades beyond that. Consider adding a `table.countRows()` check to trigger index creation automatically.
+
 ### Quality Additions (beyond original scope)
 
 - UUID / category whitelist input validation
