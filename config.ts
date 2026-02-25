@@ -30,6 +30,9 @@ const EproConfigSchema = Type.Object({
   optimizeAfterExtraction: Type.Optional(Type.Boolean()),
   autoIndex: Type.Optional(Type.Boolean()),
   indexThreshold: Type.Optional(Type.Number()),
+  cleanupAfterExtraction: Type.Optional(Type.Boolean()),
+  maxMemories: Type.Optional(Type.Number()),
+  memoryTTLDays: Type.Optional(Type.Number()),
 });
 
 type EproConfig = Static<typeof EproConfigSchema>;
@@ -47,6 +50,9 @@ export const DEFAULTS = {
   optimizeAfterExtraction: true,
   autoIndex: true,
   indexThreshold: 1000,
+  cleanupAfterExtraction: false,
+  maxMemories: 0,
+  memoryTTLDays: 0,
 } as const;
 
 const EMBEDDING_DIMENSIONS: Record<string, number> = {
@@ -83,6 +89,8 @@ const NUMERIC_FIELDS = [
   "extractMinMessages",
   "extractMaxChars",
   "indexThreshold",
+  "maxMemories",
+  "memoryTTLDays",
 ] as const;
 
 export function parseConfig(raw: unknown): EproConfig {
@@ -115,5 +123,7 @@ export function parseConfig(raw: unknown): EproConfig {
   assertRange("extractMinMessages", config.extractMinMessages, 1, 100);
   assertRange("extractMaxChars", config.extractMaxChars, 100, 100_000);
   assertRange("indexThreshold", config.indexThreshold, 100, 100_000);
+  assertRange("maxMemories", config.maxMemories, 0, 100_000);
+  assertRange("memoryTTLDays", config.memoryTTLDays, 0, 3650);
   return config as EproConfig;
 }

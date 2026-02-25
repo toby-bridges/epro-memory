@@ -57,6 +57,11 @@ export type OptimizeResult = {
   prune: { bytesRemoved: number; oldVersionsRemoved: number };
 };
 
+export type MaintainResult = {
+  deleted: number;
+  reason: string;
+};
+
 export class MemoryDB {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
@@ -287,6 +292,116 @@ export class MemoryDB {
     } catch (err) {
       this.logger.warn(`epro-memory: ensureIndices failed: ${String(err)}`);
     }
+  }
+
+  /**
+   * Delete a single memory by ID. Uses write lock. Validates UUID.
+   * Returns true if a row was deleted, false if not found.
+   */
+  async deleteById(id: string): Promise<boolean> {
+    await this.ensureInit();
+    assertUuid(id);
+    return this.withWriteLock(async () => {
+      const existing = await this.table!.query()
+        .where(`id = '${id}'`)
+        .limit(1)
+        .toArray();
+      if (existing.length === 0) return false;
+      await this.table!.delete(`id = '${id}'`);
+      return true;
+    });
+  }
+
+  /**
+   * List all memories, capped at 10,000 rows.
+   */
+  async listAll(): Promise<AgentMemoryRow[]> {
+    await this.ensureInit();
+    const results = await this.table!.query().limit(10_000).toArray();
+    return results.map((row) => rowToEntry(row as Record<string, unknown>));
+  }
+
+  /**
+   * Two-phase lifecycle maintenance:
+   * 1. TTL phase: delete memories older than memoryTTLDays (adjusted by active_count)
+   * 2. Count phase: if over maxMemories, delete lowest-scored memories
+   *
+   * Profile memories are never auto-deleted (protected by default).
+   */
+  async maintain(options: {
+    maxMemories?: number;
+    memoryTTLDays?: number;
+    protectedCategories?: Set<MemoryCategory>;
+  }): Promise<MaintainResult> {
+    await this.ensureInit();
+    const {
+      maxMemories = 0,
+      memoryTTLDays = 0,
+      protectedCategories = new Set<MemoryCategory>(["profile"]),
+    } = options;
+
+    let deleted = 0;
+    const reasons: string[] = [];
+    const now = Date.now();
+
+    // Phase 1: TTL-based cleanup
+    if (memoryTTLDays > 0) {
+      const allRows = await this.listAll();
+      const baseTTLMs = memoryTTLDays * 24 * 60 * 60 * 1000;
+
+      for (const row of allRows) {
+        if (protectedCategories.has(row.category)) continue;
+        // Active memories get proportionally longer grace period
+        const adjustedTTLMs = baseTTLMs * (1 + row.active_count / 10);
+        const age = now - row.created_at;
+        if (age > adjustedTTLMs) {
+          await this.deleteById(row.id);
+          deleted++;
+        }
+      }
+      if (deleted > 0) {
+        reasons.push(`ttl: ${deleted} expired`);
+      }
+    }
+
+    // Phase 2: Count-based cleanup
+    if (maxMemories > 0) {
+      const remaining = await this.listAll();
+      const unprotected = remaining.filter(
+        (row) => !protectedCategories.has(row.category),
+      );
+      const total = remaining.length;
+
+      if (total > maxMemories) {
+        const excess = total - maxMemories;
+        // Score by active_count + recency_bonus(0-10)
+        const oldest = Math.min(...unprotected.map((r) => r.created_at));
+        const newest = Math.max(...unprotected.map((r) => r.created_at));
+        const timeRange = newest - oldest || 1;
+
+        const scored = unprotected.map((row) => {
+          const recencyBonus = ((row.created_at - oldest) / timeRange) * 10;
+          return { row, score: row.active_count + recencyBonus };
+        });
+        scored.sort((a, b) => a.score - b.score);
+
+        const toDelete = scored.slice(0, excess);
+        let countDeleted = 0;
+        for (const { row } of toDelete) {
+          await this.deleteById(row.id);
+          countDeleted++;
+        }
+        deleted += countDeleted;
+        if (countDeleted > 0) {
+          reasons.push(`count: ${countDeleted} over limit`);
+        }
+      }
+    }
+
+    return {
+      deleted,
+      reason: reasons.length > 0 ? reasons.join("; ") : "no cleanup needed",
+    };
   }
 
   async incrementActiveCount(id: string): Promise<void> {

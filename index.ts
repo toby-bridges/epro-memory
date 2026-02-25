@@ -51,6 +51,10 @@ const eproMemoryPlugin = {
       cfg.optimizeAfterExtraction ?? DEFAULTS.optimizeAfterExtraction;
     const autoIndex = cfg.autoIndex ?? DEFAULTS.autoIndex;
     const indexThreshold = cfg.indexThreshold ?? DEFAULTS.indexThreshold;
+    const cleanupAfterExtraction =
+      cfg.cleanupAfterExtraction ?? DEFAULTS.cleanupAfterExtraction;
+    const maxMemories = cfg.maxMemories ?? DEFAULTS.maxMemories;
+    const memoryTTLDays = cfg.memoryTTLDays ?? DEFAULTS.memoryTTLDays;
     const autoCapture = cfg.autoCapture ?? DEFAULTS.autoCapture;
     const autoRecall = cfg.autoRecall ?? DEFAULTS.autoRecall;
     const recallLimit = cfg.recallLimit ?? DEFAULTS.recallLimit;
@@ -162,6 +166,26 @@ const eproMemoryPlugin = {
               sessionKey,
               user,
             );
+
+            // Post-extraction maintenance: cleanup stale memories (awaited)
+            if (
+              cleanupAfterExtraction &&
+              (maxMemories > 0 || memoryTTLDays > 0)
+            ) {
+              try {
+                const result = await db.maintain({
+                  maxMemories,
+                  memoryTTLDays,
+                });
+                if (result.deleted > 0) {
+                  logger.info(
+                    `epro-memory: maintain deleted ${result.deleted} memories (${result.reason})`,
+                  );
+                }
+              } catch (err) {
+                logger.warn(`epro-memory: maintain failed: ${String(err)}`);
+              }
+            }
 
             // Post-extraction maintenance: auto-index (fire-and-forget)
             if (autoIndex) {
