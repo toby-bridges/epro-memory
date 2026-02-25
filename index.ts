@@ -49,6 +49,8 @@ const eproMemoryPlugin = {
     const dbPath = api.resolvePath(cfg.dbPath ?? DEFAULTS.dbPath);
     const optimizeAfterExtraction =
       cfg.optimizeAfterExtraction ?? DEFAULTS.optimizeAfterExtraction;
+    const autoIndex = cfg.autoIndex ?? DEFAULTS.autoIndex;
+    const indexThreshold = cfg.indexThreshold ?? DEFAULTS.indexThreshold;
     const autoCapture = cfg.autoCapture ?? DEFAULTS.autoCapture;
     const autoRecall = cfg.autoRecall ?? DEFAULTS.autoRecall;
     const recallLimit = cfg.recallLimit ?? DEFAULTS.recallLimit;
@@ -160,6 +162,15 @@ const eproMemoryPlugin = {
               sessionKey,
               user,
             );
+
+            // Post-extraction maintenance: auto-index (fire-and-forget)
+            if (autoIndex) {
+              db.ensureIndices(indexThreshold).catch((err) => {
+                logger.warn(
+                  `epro-memory: ensureIndices failed: ${String(err)}`,
+                );
+              });
+            }
 
             // Post-extraction maintenance: compact fragments (fire-and-forget)
             if (optimizeAfterExtraction) {

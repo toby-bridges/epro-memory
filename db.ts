@@ -4,6 +4,7 @@
  */
 
 import * as lancedb from "@lancedb/lancedb";
+import { Index } from "@lancedb/lancedb";
 import { randomUUID } from "node:crypto";
 import {
   MEMORY_CATEGORIES,
@@ -244,6 +245,47 @@ export class MemoryDB {
     } catch (err) {
       this.logger.warn(`epro-memory: optimize failed: ${String(err)}`);
       return null;
+    }
+  }
+
+  async countRows(): Promise<number> {
+    await this.ensureInit();
+    return this.table!.countRows();
+  }
+
+  /**
+   * Create bitmap index on category (always) and IVF_PQ vector index when
+   * row count >= threshold. Skips indices that already exist. Never throws.
+   */
+  async ensureIndices(vectorIndexThreshold: number = 1000): Promise<void> {
+    try {
+      await this.ensureInit();
+      const existing = await this.table!.listIndices();
+      const existingColumns = new Set(existing.flatMap((idx) => idx.columns));
+
+      // Bitmap index on category (always, cheap)
+      if (!existingColumns.has("category")) {
+        await this.table!.createIndex("category", {
+          config: Index.bitmap(),
+        });
+        this.logger.info("epro-memory: created bitmap index on category");
+      }
+
+      // IVF_PQ vector index when rows >= threshold
+      if (!existingColumns.has("vector")) {
+        const rows = await this.table!.countRows();
+        if (rows >= vectorIndexThreshold) {
+          const numPartitions = Math.max(1, Math.floor(Math.sqrt(rows)));
+          await this.table!.createIndex("vector", {
+            config: Index.ivfPq({ numPartitions }),
+          });
+          this.logger.info(
+            `epro-memory: created IVF_PQ vector index (${rows} rows, ${numPartitions} partitions)`,
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`epro-memory: ensureIndices failed: ${String(err)}`);
     }
   }
 
