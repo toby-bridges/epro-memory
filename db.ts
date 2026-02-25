@@ -51,6 +51,11 @@ export type MemorySearchResult = {
   score: number;
 };
 
+export type OptimizeResult = {
+  compaction: { fragmentsRemoved: number; fragmentsAdded: number };
+  prune: { bytesRemoved: number; oldVersionsRemoved: number };
+};
+
 export class MemoryDB {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
@@ -212,6 +217,34 @@ export class MemoryDB {
         throw err;
       }
     });
+  }
+
+  /**
+   * Compact fragments and prune old versions.
+   * Never throws — returns null on error.
+   */
+  async optimize(
+    cleanupOlderThanDays: number = 7,
+  ): Promise<OptimizeResult | null> {
+    try {
+      await this.ensureInit();
+      const ms = cleanupOlderThanDays * 24 * 60 * 60 * 1000;
+      const cleanupOlderThan = new Date(Date.now() - ms);
+      const stats = await this.table!.optimize({ cleanupOlderThan });
+      return {
+        compaction: {
+          fragmentsRemoved: stats.compaction.fragmentsRemoved,
+          fragmentsAdded: stats.compaction.fragmentsAdded,
+        },
+        prune: {
+          bytesRemoved: stats.prune.bytesRemoved,
+          oldVersionsRemoved: stats.prune.oldVersionsRemoved,
+        },
+      };
+    } catch (err) {
+      this.logger.warn(`epro-memory: optimize failed: ${String(err)}`);
+      return null;
+    }
   }
 
   async incrementActiveCount(id: string): Promise<void> {

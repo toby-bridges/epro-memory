@@ -47,6 +47,8 @@ const eproMemoryPlugin = {
     const embeddingModel = cfg.embedding.model ?? DEFAULTS.embeddingModel;
     const llmModel = cfg.llm.model ?? DEFAULTS.llmModel;
     const dbPath = api.resolvePath(cfg.dbPath ?? DEFAULTS.dbPath);
+    const optimizeAfterExtraction =
+      cfg.optimizeAfterExtraction ?? DEFAULTS.optimizeAfterExtraction;
     const autoCapture = cfg.autoCapture ?? DEFAULTS.autoCapture;
     const autoRecall = cfg.autoRecall ?? DEFAULTS.autoRecall;
     const recallLimit = cfg.recallLimit ?? DEFAULTS.recallLimit;
@@ -158,6 +160,21 @@ const eproMemoryPlugin = {
               sessionKey,
               user,
             );
+
+            // Post-extraction maintenance: compact fragments (fire-and-forget)
+            if (optimizeAfterExtraction) {
+              db.optimize()
+                .then((stats) => {
+                  if (stats) {
+                    logger.info(
+                      `epro-memory: optimize compacted ${stats.compaction.fragmentsRemoved} fragments, pruned ${stats.prune.oldVersionsRemoved} old versions`,
+                    );
+                  }
+                })
+                .catch((err) => {
+                  logger.warn(`epro-memory: optimize failed: ${String(err)}`);
+                });
+            }
           } catch (err) {
             logger.warn(`epro-memory: extraction failed: ${String(err)}`);
           }

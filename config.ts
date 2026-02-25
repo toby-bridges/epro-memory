@@ -27,6 +27,7 @@ const EproConfigSchema = Type.Object({
   recallMinScore: Type.Optional(Type.Number()),
   extractMinMessages: Type.Optional(Type.Number()),
   extractMaxChars: Type.Optional(Type.Number()),
+  optimizeAfterExtraction: Type.Optional(Type.Boolean()),
 });
 
 type EproConfig = Static<typeof EproConfigSchema>;
@@ -41,6 +42,7 @@ export const DEFAULTS = {
   recallMinScore: 0.3,
   extractMinMessages: 4,
   extractMaxChars: 8000,
+  optimizeAfterExtraction: true,
 } as const;
 
 const EMBEDDING_DIMENSIONS: Record<string, number> = {
