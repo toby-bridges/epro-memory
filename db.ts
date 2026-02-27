@@ -425,9 +425,12 @@ export class MemoryDB {
     const reasons: string[] = [];
     const now = Date.now();
 
+    // Use actual row count for accurate decisions (not capped by getAll limit)
+    const totalRowCount = await this.countRows();
+
     // Phase 1: TTL-based cleanup
     if (memoryTTLDays > 0) {
-      const allRows = await this.getAll();
+      const allRows = await this.getAll(totalRowCount);
       const baseTTLMs = memoryTTLDays * 24 * 60 * 60 * 1000;
 
       for (const row of allRows) {
@@ -447,7 +450,8 @@ export class MemoryDB {
 
     // Phase 2: Count-based cleanup
     if (maxMemories > 0) {
-      const remaining = await this.getAll();
+      const currentCount = deleted > 0 ? await this.countRows() : totalRowCount;
+      const remaining = await this.getAll(currentCount);
       const unprotected = remaining.filter(
         (row) => !protectedCategories.has(row.category),
       );

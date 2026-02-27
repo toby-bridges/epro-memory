@@ -195,6 +195,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
+    vi.spyOn(db, "countRows").mockResolvedValue(2);
     vi.spyOn(db, "getAll").mockResolvedValue([oldRow, freshRow]);
 
     const result = await db.maintain({ memoryTTLDays: 30 });
@@ -214,6 +215,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
+    vi.spyOn(db, "countRows").mockResolvedValue(1);
     vi.spyOn(db, "getAll").mockResolvedValue([activeRow]);
 
     const result = await db.maintain({ memoryTTLDays: 30 });
@@ -230,6 +232,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
+    vi.spyOn(db, "countRows").mockResolvedValue(1);
     vi.spyOn(db, "getAll").mockResolvedValue([profileRow]);
 
     const result = await db.maintain({ memoryTTLDays: 30 });
@@ -253,10 +256,8 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    // First call for TTL phase, second call for count phase (after "deletions")
-    vi.spyOn(db, "getAll")
-      .mockResolvedValueOnce([profileRow, eventRow]) // TTL phase
-      .mockResolvedValueOnce([profileRow, eventRow]); // count phase
+    vi.spyOn(db, "countRows").mockResolvedValue(2);
+    vi.spyOn(db, "getAll").mockResolvedValue([profileRow, eventRow]);
 
     const result = await db.maintain({ maxMemories: 1 });
     // Should delete eventRow (1 excess), not profileRow
@@ -289,6 +290,7 @@ describe("MemoryDB.maintain() unit", () => {
     ];
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
+    vi.spyOn(db, "countRows").mockResolvedValue(3);
     vi.spyOn(db, "getAll").mockResolvedValue(rows);
 
     const result = await db.maintain({ maxMemories: 2 });
@@ -321,6 +323,9 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
+    vi.spyOn(db, "countRows")
+      .mockResolvedValueOnce(3) // initial
+      .mockResolvedValueOnce(2); // after TTL deletion
     vi.spyOn(db, "getAll")
       .mockResolvedValueOnce([ttlExpired, recent1, recent2]) // TTL phase
       .mockResolvedValueOnce([recent1, recent2]); // count phase (ttlExpired removed)
@@ -334,6 +339,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("returns 'no cleanup needed' when nothing to do", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    vi.spyOn(db, "countRows").mockResolvedValue(0);
     vi.spyOn(db, "getAll").mockResolvedValue([]);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
 
@@ -344,6 +350,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("skips TTL phase when memoryTTLDays is 0", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    vi.spyOn(db, "countRows").mockResolvedValue(0);
     const getAllSpy = vi.spyOn(db, "getAll").mockResolvedValue([]);
 
     const result = await db.maintain({ memoryTTLDays: 0 });
@@ -361,6 +368,7 @@ describe("MemoryDB.maintain() unit", () => {
         created_at: now,
       }),
     ];
+    vi.spyOn(db, "countRows").mockResolvedValue(1);
     vi.spyOn(db, "getAll").mockResolvedValue(rows);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
 
@@ -384,6 +392,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
+    vi.spyOn(db, "countRows").mockResolvedValue(2);
     vi.spyOn(db, "getAll").mockResolvedValue([profileRow, prefsRow]);
 
     // Protect preferences instead of profile
@@ -415,6 +424,7 @@ describe("MemoryDB.maintain() unit", () => {
         created_at: Date.now(),
       }),
     ];
+    vi.spyOn(db, "countRows").mockResolvedValue(3);
     vi.spyOn(db, "getAll").mockResolvedValue(rows);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
 
@@ -422,6 +432,17 @@ describe("MemoryDB.maintain() unit", () => {
     const result = await db.maintain({ maxMemories: 1 });
     // Nothing should be deleted since all are protected
     expect(result.deleted).toBe(0);
+  });
+
+  it("passes actual row count to getAll to avoid 10k cap truncation", async () => {
+    const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    vi.spyOn(db, "countRows").mockResolvedValue(15000);
+    const getAllSpy = vi.spyOn(db, "getAll").mockResolvedValue([]);
+    vi.spyOn(db, "deleteById").mockResolvedValue(true);
+
+    await db.maintain({ memoryTTLDays: 30 });
+    // getAll should be called with actual count (15000), not default 10000
+    expect(getAllSpy).toHaveBeenCalledWith(15000);
   });
 });
 

@@ -197,6 +197,51 @@ describe("vectorDimsForModel", () => {
   });
 });
 
+describe("nested numeric field pre-cast validation", () => {
+  const base = { embedding: { apiKey: "k" }, llm: { apiKey: "k" } };
+
+  it("rejects string qmdProjection.intervalMs", () => {
+    expect(() =>
+      parseConfig({ ...base, qmdProjection: { intervalMs: "fast" } }),
+    ).toThrow("qmdProjection.intervalMs must be a number");
+  });
+
+  it("rejects null bootstrap.patternPromotionThreshold", () => {
+    expect(() =>
+      parseConfig({ ...base, bootstrap: { patternPromotionThreshold: null } }),
+    ).toThrow("bootstrap.patternPromotionThreshold must be a number, got null");
+  });
+
+  it("rejects NaN bootstrap.minConfidence", () => {
+    expect(() =>
+      parseConfig({ ...base, bootstrap: { minConfidence: NaN } }),
+    ).toThrow("bootstrap.minConfidence must be a number, got NaN");
+  });
+
+  it("rejects out-of-range qmdProjection.intervalMs", () => {
+    expect(() =>
+      parseConfig({ ...base, qmdProjection: { intervalMs: 100 } }),
+    ).toThrow("qmdProjection.intervalMs must be a number between");
+  });
+
+  it("rejects out-of-range bootstrap.patternPromotionThreshold", () => {
+    expect(() =>
+      parseConfig({ ...base, bootstrap: { patternPromotionThreshold: 0 } }),
+    ).toThrow("bootstrap.patternPromotionThreshold must be a number between");
+  });
+
+  it("accepts valid nested numeric values", () => {
+    const cfg = parseConfig({
+      ...base,
+      qmdProjection: { intervalMs: 3_600_000 },
+      bootstrap: { patternPromotionThreshold: 10, minConfidence: 0.8 },
+    });
+    expect(cfg.qmdProjection?.intervalMs).toBe(3_600_000);
+    expect(cfg.bootstrap?.patternPromotionThreshold).toBe(10);
+    expect(cfg.bootstrap?.minConfidence).toBe(0.8);
+  });
+});
+
 describe("DEFAULTS", () => {
   it("has expected values", () => {
     expect(DEFAULTS.embeddingModel).toBe("text-embedding-3-small");

@@ -171,38 +171,51 @@ const NUMERIC_FIELDS = [
 
 const DECAY_NUMERIC_FIELDS = ["halfLifeDays", "activeWeight"] as const;
 
+/** Nested object numeric fields that must be validated before Value.Cast coercion. */
+const NESTED_NUMERIC_FIELDS: Array<{
+  parent: string;
+  fields: readonly string[];
+}> = [
+  { parent: "decay", fields: DECAY_NUMERIC_FIELDS },
+  { parent: "qmdProjection", fields: ["intervalMs"] },
+  {
+    parent: "bootstrap",
+    fields: ["patternPromotionThreshold", "minConfidence"],
+  },
+];
+
+/**
+ * Validate that a value is a proper number (not null, not NaN, not a string).
+ * Throws with a descriptive message if invalid.
+ */
+function assertNumericField(path: string, v: unknown): void {
+  if (v === undefined) return;
+  if (v === null) {
+    throw new Error(`epro-memory: ${path} must be a number, got null`);
+  }
+  if (typeof v !== "number" || Number.isNaN(v)) {
+    throw new Error(
+      `epro-memory: ${path} must be a number, got ${Number.isNaN(v as number) ? "NaN" : typeof v}`,
+    );
+  }
+}
+
 export function parseConfig(raw: unknown): EproConfig {
   // Reject non-numeric types on numeric fields BEFORE Value.Cast coerces them
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
+
+    // Top-level numeric fields
     for (const field of NUMERIC_FIELDS) {
-      const v = obj[field];
-      if (v === undefined) continue;
-      if (v === null) {
-        throw new Error(`epro-memory: ${field} must be a number, got null`);
-      }
-      if (typeof v !== "number" || Number.isNaN(v)) {
-        throw new Error(
-          `epro-memory: ${field} must be a number, got ${Number.isNaN(v) ? "NaN" : typeof v}`,
-        );
-      }
+      assertNumericField(field, obj[field]);
     }
 
-    // Validate decay config numeric fields
-    const decayObj = obj.decay as Record<string, unknown> | undefined;
-    if (decayObj && typeof decayObj === "object") {
-      for (const field of DECAY_NUMERIC_FIELDS) {
-        const v = decayObj[field];
-        if (v === undefined) continue;
-        if (v === null) {
-          throw new Error(
-            `epro-memory: decay.${field} must be a number, got null`,
-          );
-        }
-        if (typeof v !== "number" || Number.isNaN(v)) {
-          throw new Error(
-            `epro-memory: decay.${field} must be a number, got ${Number.isNaN(v) ? "NaN" : typeof v}`,
-          );
+    // Nested object numeric fields
+    for (const { parent, fields } of NESTED_NUMERIC_FIELDS) {
+      const nested = obj[parent] as Record<string, unknown> | undefined;
+      if (nested && typeof nested === "object") {
+        for (const field of fields) {
+          assertNumericField(`${parent}.${field}`, nested[field]);
         }
       }
     }
@@ -230,6 +243,32 @@ export function parseConfig(raw: unknown): EproConfig {
   if (config.decay) {
     assertRange("decay.halfLifeDays", config.decay.halfLifeDays, 1, 365);
     assertRange("decay.activeWeight", config.decay.activeWeight, 0, 1);
+  }
+
+  // Validate qmdProjection config ranges
+  if (config.qmdProjection) {
+    assertRange(
+      "qmdProjection.intervalMs",
+      config.qmdProjection.intervalMs,
+      60_000,
+      86_400_000 * 30,
+    );
+  }
+
+  // Validate bootstrap config ranges
+  if (config.bootstrap) {
+    assertRange(
+      "bootstrap.patternPromotionThreshold",
+      config.bootstrap.patternPromotionThreshold,
+      1,
+      1000,
+    );
+    assertRange(
+      "bootstrap.minConfidence",
+      config.bootstrap.minConfidence,
+      0,
+      1,
+    );
   }
 
   return config as EproConfig;

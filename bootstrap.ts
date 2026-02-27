@@ -9,8 +9,26 @@
  */
 
 import { writeFile, readFile, mkdir } from "fs/promises";
-import { join } from "path";
+import { join, basename } from "path";
 import type { AgentMemoryRow, PluginLogger } from "./types.js";
+
+/**
+ * Sanitize a skill name for safe use as a filename.
+ * Strips path separators, enforces kebab-case character whitelist,
+ * and limits length to prevent path traversal or injection.
+ */
+export function sanitizeSkillName(name: string): string {
+  // Take only the basename to strip any directory traversal
+  let safe = basename(name);
+  // Allow only lowercase alphanumeric and hyphens (kebab-case)
+  safe = safe.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  // Collapse consecutive hyphens and trim
+  safe = safe.replace(/-{2,}/g, "-").replace(/^-|-$/g, "");
+  // Limit length
+  if (safe.length > 64) safe = safe.slice(0, 64);
+  // Fallback if empty
+  return safe || "unnamed-skill";
+}
 
 /** Configuration for bootstrap feature */
 export interface BootstrapConfig {
@@ -242,7 +260,9 @@ Respond in JSON format:
       return {
         suitable: Boolean(parsed.suitable),
         confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0)),
-        suggestedName: String(parsed.suggestedName || this.generateName(pattern)),
+        suggestedName: String(
+          parsed.suggestedName || this.generateName(pattern),
+        ),
         triggers: Array.isArray(parsed.triggers) ? parsed.triggers : [],
         steps: Array.isArray(parsed.steps) ? parsed.steps : [],
         reason: String(parsed.reason || "LLM analysis"),
@@ -283,10 +303,7 @@ Respond in JSON format:
     const baseConfidence = 0.3 + indicators * 0.2;
 
     // Boost confidence for high active_count
-    const activeBoost = Math.min(
-      0.2,
-      pattern.active_count * 0.02,
-    );
+    const activeBoost = Math.min(0.2, pattern.active_count * 0.02);
     const confidence = Math.min(1, baseConfidence + activeBoost);
 
     // Extract steps from content (simple heuristic)
@@ -347,7 +364,9 @@ Respond in JSON format:
       .filter((s) => s.length > 10)
       .slice(0, 5);
 
-    return sentences.length > 0 ? sentences : ["Execute the pattern as described"];
+    return sentences.length > 0
+      ? sentences
+      : ["Execute the pattern as described"];
   }
 
   /**
@@ -418,7 +437,8 @@ _生成时间: ${new Date(candidate.identifiedAt).toISOString()}_
     await this.ensureDir();
 
     const draft = this.generateSkillDraft(candidate);
-    const filename = `${candidate.name}.md`;
+    const safeName = sanitizeSkillName(candidate.name);
+    const filename = `${safeName}.md`;
     const filepath = join(this.draftPath, filename);
 
     await writeFile(filepath, draft, "utf-8");

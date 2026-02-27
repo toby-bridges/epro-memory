@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   BootstrapManager,
+  sanitizeSkillName,
   type BootstrapConfig,
   type SkillCandidate,
   type LLMClient,
@@ -115,7 +116,9 @@ describe("BootstrapManager", () => {
 
       // High active should have better or equal confidence
       if (lowResult && highResult) {
-        expect(highResult.confidence).toBeGreaterThanOrEqual(lowResult.confidence);
+        expect(highResult.confidence).toBeGreaterThanOrEqual(
+          lowResult.confidence,
+        );
       }
     });
   });
@@ -338,6 +341,50 @@ describe("BootstrapManager", () => {
       const all = manager.getAllCandidates();
       expect(all.length).toBe(2);
     });
+  });
+});
+
+describe("sanitizeSkillName", () => {
+  it("strips path traversal sequences", () => {
+    expect(sanitizeSkillName("../../etc/passwd")).toBe("passwd");
+    expect(sanitizeSkillName("../../../somefile")).toBe("somefile");
+    expect(sanitizeSkillName("../../.ssh/authorized_keys")).toBe(
+      "authorized-keys",
+    );
+  });
+
+  it("strips directory separators", () => {
+    expect(sanitizeSkillName("foo/bar/baz")).toBe("baz");
+    expect(sanitizeSkillName("foo\\bar")).toBe("foo-bar");
+  });
+
+  it("enforces kebab-case whitelist", () => {
+    expect(sanitizeSkillName("my_skill_name")).toBe("my-skill-name");
+    expect(sanitizeSkillName("My Skill Name")).toBe("my-skill-name");
+    expect(sanitizeSkillName("skill@v2!")).toBe("skill-v2");
+  });
+
+  it("collapses consecutive hyphens", () => {
+    expect(sanitizeSkillName("a---b")).toBe("a-b");
+    expect(sanitizeSkillName("--leading--trailing--")).toBe("leading-trailing");
+  });
+
+  it("limits length to 64 characters", () => {
+    const long = "a".repeat(100);
+    expect(sanitizeSkillName(long).length).toBeLessThanOrEqual(64);
+  });
+
+  it("returns fallback for empty input", () => {
+    expect(sanitizeSkillName("")).toBe("unnamed-skill");
+    expect(sanitizeSkillName("!!!")).toBe("unnamed-skill");
+    expect(sanitizeSkillName("/")).toBe("unnamed-skill");
+  });
+
+  it("preserves valid kebab-case names", () => {
+    expect(sanitizeSkillName("deploy-to-production")).toBe(
+      "deploy-to-production",
+    );
+    expect(sanitizeSkillName("my-skill-v2")).toBe("my-skill-v2");
   });
 });
 
