@@ -207,6 +207,9 @@ Please decide:
 - CREATE: This is completely new information, should be created
 - MERGE: Candidate memory should be merged with existing memories
 
+IMPORTANT: "events" and "cases" categories are independent records — they do NOT support MERGE.
+For these categories, only use SKIP or CREATE.
+
 Return JSON format:
 {
   "decision": "skip|create|merge",

@@ -35,6 +35,7 @@ export class MemoryDeduplicator {
       5,
       SIMILARITY_THRESHOLD,
       candidate.category,
+      true, // skipDecay: dedup needs pure vector similarity
     );
 
     if (similar.length === 0) {

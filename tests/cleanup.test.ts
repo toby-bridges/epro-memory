@@ -40,13 +40,20 @@ describe("MemoryDB.deleteById() unit", () => {
       query: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
           limit: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([{
-              id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-              category: "events",
-              abstract: "a", overview: "o", content: "c",
-              vector: [1, 2, 3], source_session: "s",
-              active_count: 0, created_at: 1000, updated_at: 1000,
-            }]),
+            toArray: vi.fn().mockResolvedValue([
+              {
+                id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                category: "events",
+                abstract: "a",
+                overview: "o",
+                content: "c",
+                vector: [1, 2, 3],
+                source_session: "s",
+                active_count: 0,
+                created_at: 1000,
+                updated_at: 1000,
+              },
+            ]),
           }),
         }),
       }),
@@ -105,17 +112,22 @@ describe("MemoryDB.deleteById() unit", () => {
   });
 });
 
-// --- listAll unit tests ---
+// --- getAll unit tests ---
 
-describe("MemoryDB.listAll() unit", () => {
+describe("MemoryDB.getAll() unit", () => {
   it("returns all rows up to cap", async () => {
     const db = new MemoryDB("/tmp/fake-list", 3, silentLogger);
     const fakeRows = Array.from({ length: 3 }, (_, i) => ({
       id: `${i}0000000-0000-0000-0000-000000000000`,
       category: "events",
-      abstract: `a-${i}`, overview: `o-${i}`, content: `c-${i}`,
-      vector: [i, i + 0.1, i + 0.2], source_session: "s",
-      active_count: 0, created_at: 1000, updated_at: 1000,
+      abstract: `a-${i}`,
+      overview: `o-${i}`,
+      content: `c-${i}`,
+      vector: [i, i + 0.1, i + 0.2],
+      source_session: "s",
+      active_count: 0,
+      created_at: 1000,
+      updated_at: 1000,
     }));
     const fakeTable = {
       query: vi.fn().mockReturnValue({
@@ -126,7 +138,7 @@ describe("MemoryDB.listAll() unit", () => {
     };
     (db as any).table = fakeTable;
 
-    const result = await db.listAll();
+    const result = await db.getAll();
     expect(result.length).toBe(3);
     expect(result[0].id).toBe("00000000-0000-0000-0000-000000000000");
   });
@@ -141,7 +153,7 @@ describe("MemoryDB.listAll() unit", () => {
     };
     (db as any).table = fakeTable;
 
-    await db.listAll();
+    await db.getAll();
     expect(limitFn).toHaveBeenCalledWith(10_000);
   });
 });
@@ -149,10 +161,18 @@ describe("MemoryDB.listAll() unit", () => {
 // --- maintain() unit tests ---
 
 describe("MemoryDB.maintain() unit", () => {
-  function makeRow(overrides: Partial<AgentMemoryRow> & { id: string; category: MemoryCategory }): AgentMemoryRow {
+  function makeRow(
+    overrides: Partial<AgentMemoryRow> & {
+      id: string;
+      category: MemoryCategory;
+    },
+  ): AgentMemoryRow {
     return {
-      abstract: "a", overview: "o", content: "c",
-      vector: [1, 2, 3], source_session: "s",
+      abstract: "a",
+      overview: "o",
+      content: "c",
+      vector: [1, 2, 3],
+      source_session: "s",
       active_count: 0,
       created_at: Date.now() - 100 * 24 * 60 * 60 * 1000, // 100 days ago
       updated_at: Date.now(),
@@ -175,7 +195,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    vi.spyOn(db, "listAll").mockResolvedValue([oldRow, freshRow]);
+    vi.spyOn(db, "getAll").mockResolvedValue([oldRow, freshRow]);
 
     const result = await db.maintain({ memoryTTLDays: 30 });
     expect(result.deleted).toBe(1);
@@ -194,7 +214,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    vi.spyOn(db, "listAll").mockResolvedValue([activeRow]);
+    vi.spyOn(db, "getAll").mockResolvedValue([activeRow]);
 
     const result = await db.maintain({ memoryTTLDays: 30 });
     expect(result.deleted).toBe(0); // Should NOT be deleted
@@ -210,7 +230,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    vi.spyOn(db, "listAll").mockResolvedValue([profileRow]);
+    vi.spyOn(db, "getAll").mockResolvedValue([profileRow]);
 
     const result = await db.maintain({ memoryTTLDays: 30 });
     expect(result.deleted).toBe(0);
@@ -234,7 +254,7 @@ describe("MemoryDB.maintain() unit", () => {
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
     // First call for TTL phase, second call for count phase (after "deletions")
-    vi.spyOn(db, "listAll")
+    vi.spyOn(db, "getAll")
       .mockResolvedValueOnce([profileRow, eventRow]) // TTL phase
       .mockResolvedValueOnce([profileRow, eventRow]); // count phase
 
@@ -248,17 +268,34 @@ describe("MemoryDB.maintain() unit", () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
     const now = Date.now();
     const rows: AgentMemoryRow[] = [
-      makeRow({ id: "11111111-1111-1111-1111-111111111111", category: "events", active_count: 0, created_at: now - 10000 }),
-      makeRow({ id: "22222222-2222-2222-2222-222222222222", category: "events", active_count: 5, created_at: now - 5000 }),
-      makeRow({ id: "33333333-3333-3333-3333-333333333333", category: "events", active_count: 10, created_at: now }),
+      makeRow({
+        id: "11111111-1111-1111-1111-111111111111",
+        category: "events",
+        active_count: 0,
+        created_at: now - 10000,
+      }),
+      makeRow({
+        id: "22222222-2222-2222-2222-222222222222",
+        category: "events",
+        active_count: 5,
+        created_at: now - 5000,
+      }),
+      makeRow({
+        id: "33333333-3333-3333-3333-333333333333",
+        category: "events",
+        active_count: 10,
+        created_at: now,
+      }),
     ];
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    vi.spyOn(db, "listAll").mockResolvedValue(rows);
+    vi.spyOn(db, "getAll").mockResolvedValue(rows);
 
     const result = await db.maintain({ maxMemories: 2 });
     // Row 1 has lowest score (active_count=0, oldest)
-    expect(deleteByIdSpy).toHaveBeenCalledWith("11111111-1111-1111-1111-111111111111");
+    expect(deleteByIdSpy).toHaveBeenCalledWith(
+      "11111111-1111-1111-1111-111111111111",
+    );
     expect(result.deleted).toBe(1);
   });
 
@@ -284,7 +321,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    vi.spyOn(db, "listAll")
+    vi.spyOn(db, "getAll")
       .mockResolvedValueOnce([ttlExpired, recent1, recent2]) // TTL phase
       .mockResolvedValueOnce([recent1, recent2]); // count phase (ttlExpired removed)
 
@@ -297,7 +334,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("returns 'no cleanup needed' when nothing to do", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
-    vi.spyOn(db, "listAll").mockResolvedValue([]);
+    vi.spyOn(db, "getAll").mockResolvedValue([]);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
 
     const result = await db.maintain({});
@@ -307,20 +344,24 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("skips TTL phase when memoryTTLDays is 0", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
-    const listAllSpy = vi.spyOn(db, "listAll").mockResolvedValue([]);
+    const getAllSpy = vi.spyOn(db, "getAll").mockResolvedValue([]);
 
     const result = await db.maintain({ memoryTTLDays: 0 });
-    // listAll should not be called since TTL=0 and maxMemories defaults to 0
-    expect(listAllSpy).not.toHaveBeenCalled();
+    // getAll should not be called since TTL=0 and maxMemories defaults to 0
+    expect(getAllSpy).not.toHaveBeenCalled();
   });
 
   it("skips count phase when maxMemories is 0", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
     const now = Date.now();
     const rows = [
-      makeRow({ id: "11111111-1111-1111-1111-111111111111", category: "events", created_at: now }),
+      makeRow({
+        id: "11111111-1111-1111-1111-111111111111",
+        category: "events",
+        created_at: now,
+      }),
     ];
-    vi.spyOn(db, "listAll").mockResolvedValue(rows);
+    vi.spyOn(db, "getAll").mockResolvedValue(rows);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
 
     const result = await db.maintain({ memoryTTLDays: 1 }); // TTL=1, maxMemories=0 (skip count)
@@ -343,7 +384,7 @@ describe("MemoryDB.maintain() unit", () => {
     });
 
     const deleteByIdSpy = vi.spyOn(db, "deleteById").mockResolvedValue(true);
-    vi.spyOn(db, "listAll").mockResolvedValue([profileRow, prefsRow]);
+    vi.spyOn(db, "getAll").mockResolvedValue([profileRow, prefsRow]);
 
     // Protect preferences instead of profile
     const result = await db.maintain({
@@ -358,11 +399,23 @@ describe("MemoryDB.maintain() unit", () => {
   it("handles empty unprotected set in count phase gracefully", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
     const rows = [
-      makeRow({ id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", category: "profile", created_at: Date.now() }),
-      makeRow({ id: "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", category: "profile", created_at: Date.now() }),
-      makeRow({ id: "cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee", category: "profile", created_at: Date.now() }),
+      makeRow({
+        id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        category: "profile",
+        created_at: Date.now(),
+      }),
+      makeRow({
+        id: "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee",
+        category: "profile",
+        created_at: Date.now(),
+      }),
+      makeRow({
+        id: "cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee",
+        category: "profile",
+        created_at: Date.now(),
+      }),
     ];
-    vi.spyOn(db, "listAll").mockResolvedValue(rows);
+    vi.spyOn(db, "getAll").mockResolvedValue(rows);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
 
     // maxMemories=1 but all rows are protected profile
@@ -427,7 +480,7 @@ describeIfIntegration("MemoryDB cleanup integration", () => {
     const result = await db.maintain({ maxMemories: 2 });
     expect(result.deleted).toBe(1);
 
-    const remaining = await db.listAll();
+    const remaining = await db.getAll();
     expect(remaining.length).toBe(2);
   });
 });

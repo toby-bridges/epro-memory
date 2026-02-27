@@ -22,28 +22,79 @@
       "embedding": {
         "type": "object",
         "properties": {
-          "model": { "type": "string" },
+          "model": { "type": "string", "description": "Embedding model name (default: text-embedding-3-small)" },
           "apiKey": { "type": "string" },
-          "baseUrl": { "type": "string" }
+          "baseUrl": { "type": "string", "description": "Custom API base URL for embedding service" },
+          "dimensions": { "type": "number", "description": "Vector dimensions (64-8192). Overrides model default. Useful for custom models or Matryoshka truncation." }
         },
         "required": ["apiKey"]
       },
       "llm": {
         "type": "object",
         "properties": {
-          "model": { "type": "string" },
+          "model": { "type": "string", "description": "LLM model name (default: gpt-4o-mini)" },
           "apiKey": { "type": "string" },
-          "baseUrl": { "type": "string" }
+          "baseUrl": { "type": "string", "description": "Custom API base URL for LLM service" }
         },
         "required": ["apiKey"]
       },
-      "dbPath": { "type": "string" },
-      "autoCapture": { "type": "boolean" },
-      "autoRecall": { "type": "boolean" },
-      "recallLimit": { "type": "number" },
-      "recallMinScore": { "type": "number" },
-      "extractMinMessages": { "type": "number" },
-      "extractMaxChars": { "type": "number" }
+      "dbPath": { "type": "string", "description": "LanceDB storage path (default: ~/.clawdbot/memory/epro-lancedb)" },
+      "autoCapture": { "type": "boolean", "description": "Auto-extract memories on agent_end (default: true)" },
+      "autoRecall": { "type": "boolean", "description": "Auto-inject memories on before_agent_start (default: true)" },
+      "recallLimit": { "type": "number", "description": "Max memories to recall (1-100, default: 5)" },
+      "recallMinScore": { "type": "number", "description": "Min similarity score for recall (0-1, default: 0.3)" },
+      "extractMinMessages": { "type": "number", "description": "Min messages to trigger extraction (1-100, default: 4)" },
+      "extractMaxChars": { "type": "number", "description": "Max conversation chars for extraction (100-100000, default: 8000)" },
+      "decay": {
+        "type": "object",
+        "description": "Time-decay scoring for memory search results",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable decay scoring (default: false)" },
+          "halfLifeDays": { "type": "number", "description": "Half-life in days for exponential decay (1-365, default: 30)" },
+          "activeWeight": { "type": "number", "description": "Weight for active_count boost (0-1, default: 0.1)" }
+        }
+      },
+      "qmdProjection": {
+        "type": "object",
+        "description": "QMD Projection — export memories as Markdown for QMD indexing",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable QMD projection (default: false)" },
+          "qmdPath": { "type": "string", "description": "Output path for QMD files (default: ~/.clawdbot/memory/qmd)" },
+          "includeL1": { "type": "boolean", "description": "Include L1 overview in output (default: true)" },
+          "categorySeparateFiles": { "type": "boolean", "description": "Generate per-category files (default: true)" },
+          "dailyTrigger": { "type": "boolean", "description": "Trigger projection on heartbeat (default: true)" },
+          "intervalMs": { "type": "number", "description": "Min interval between projections in ms (default: 86400000 = 24h)" }
+        }
+      },
+      "checkpoint": {
+        "type": "object",
+        "description": "Resumable extraction with crash recovery",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable checkpoint (default: false)" },
+          "path": { "type": "string", "description": "Checkpoint storage path (default: ~/.clawdbot/memory/checkpoints)" },
+          "autoRecoverOnStart": { "type": "boolean", "description": "Auto-resume incomplete extractions on startup (default: true)" }
+        }
+      },
+      "reporting": {
+        "type": "object",
+        "description": "Memory change reporting and notifications",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable reporting (default: false)" },
+          "logPath": { "type": "string", "description": "Report log path (default: ~/.clawdbot/memory/reports)" },
+          "dailySummary": { "type": "boolean", "description": "Generate daily summary reports (default: true)" },
+          "notifyOnPivotal": { "type": "boolean", "description": "Mark important changes for notification (default: true)" }
+        }
+      },
+      "bootstrap": {
+        "type": "object",
+        "description": "Pattern-to-Skill promotion — auto-generate SKILL.md drafts from high-activity patterns",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable bootstrap (default: false)" },
+          "patternPromotionThreshold": { "type": "number", "description": "Min active_count to consider promotion (default: 5)" },
+          "skillDraftPath": { "type": "string", "description": "Output path for skill drafts (default: ~/.clawdbot/memory/skill-drafts)" },
+          "minConfidence": { "type": "number", "description": "Min confidence score for draft generation (0-1, default: 0.7)" }
+        }
+      }
     },
     "required": ["embedding", "llm"]
   }

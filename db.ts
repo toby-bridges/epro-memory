@@ -12,6 +12,7 @@ import {
   type MemoryCategory,
   type PluginLogger,
 } from "./types.js";
+import { type DecayConfigType, DEFAULTS } from "./config.js";
 
 const TABLE_NAME = "agent_memories";
 
@@ -47,6 +48,37 @@ function rowToEntry(row: Record<string, unknown>): AgentMemoryRow {
   };
 }
 
+/**
+ * Computes decay-adjusted score for memory search results.
+ *
+ * Formula:
+ *   decayScore = vectorScore * timeDecay * activeBoost
+ *
+ * Where:
+ *   - timeDecay = 2^(-ageDays / halfLifeDays)  (exponential decay)
+ *   - activeBoost = 1 + activeWeight * log(1 + activeCount)  (logarithmic boost)
+ *
+ * @param vectorScore - Original similarity score from vector search (0-1)
+ * @param createdAt - Memory creation timestamp in milliseconds
+ * @param activeCount - Number of times this memory was activated/recalled
+ * @param config - Decay configuration
+ * @returns Decay-adjusted score
+ */
+export function computeDecayScore(
+  vectorScore: number,
+  createdAt: number,
+  activeCount: number,
+  config: Required<DecayConfigType>,
+): number {
+  if (!config.enabled) return vectorScore;
+
+  const ageDays = (Date.now() - createdAt) / (1000 * 60 * 60 * 24);
+  const timeDecay = Math.pow(2, -ageDays / config.halfLifeDays);
+  const activeBoost = 1 + config.activeWeight * Math.log(1 + activeCount);
+
+  return vectorScore * timeDecay * activeBoost;
+}
+
 export type MemorySearchResult = {
   entry: AgentMemoryRow;
   score: number;
@@ -67,12 +99,21 @@ export class MemoryDB {
   private table: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
   private writeLock: Promise<void> = Promise.resolve();
+  private readonly decayConfig: Required<DecayConfigType>;
 
   constructor(
     private readonly dbPath: string,
     private readonly vectorDim: number,
     private readonly logger: PluginLogger,
-  ) {}
+    decayConfig?: DecayConfigType,
+  ) {
+    // Merge provided config with defaults
+    this.decayConfig = {
+      enabled: decayConfig?.enabled ?? DEFAULTS.decay.enabled,
+      halfLifeDays: decayConfig?.halfLifeDays ?? DEFAULTS.decay.halfLifeDays,
+      activeWeight: decayConfig?.activeWeight ?? DEFAULTS.decay.activeWeight,
+    };
+  }
 
   /** Serialize all write operations to prevent concurrent read-modify-write races. */
   private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -105,6 +146,19 @@ export class MemoryDB {
 
     if (tables.includes(TABLE_NAME)) {
       this.table = await this.db.openTable(TABLE_NAME);
+
+      // Verify existing table's vector dimensions match configured dimensions
+      const sample = await this.table.query().limit(1).toArray();
+      if (sample.length > 0) {
+        const existingDim = (sample[0].vector as number[]).length;
+        if (existingDim !== this.vectorDim) {
+          throw new Error(
+            `epro-memory: vector dimension mismatch — DB has ${existingDim}-dim vectors ` +
+              `but config expects ${this.vectorDim}. ` +
+              `Change embedding.dimensions or delete the DB to recreate.`,
+          );
+        }
+      }
     } else {
       // Create table with schema row then delete it
       this.table = await this.db.createTable(TABLE_NAME, [
@@ -133,6 +187,15 @@ export class MemoryDB {
     >,
   ): Promise<AgentMemoryRow> {
     await this.ensureInit();
+
+    // Validate vector dimensions before storing
+    if (entry.vector.length !== this.vectorDim) {
+      throw new Error(
+        `epro-memory: vector dimension mismatch — got ${entry.vector.length}-dim vector ` +
+          `but DB expects ${this.vectorDim}`,
+      );
+    }
+
     const now = Date.now();
     const row: AgentMemoryRow = {
       ...entry,
@@ -150,10 +213,21 @@ export class MemoryDB {
     limit: number = 5,
     minScore: number = 0.3,
     categoryFilter?: MemoryCategory,
+    skipDecay?: boolean,
   ): Promise<MemorySearchResult[]> {
     await this.ensureInit();
 
-    let query = this.table!.vectorSearch(vector).limit(limit);
+    if (vector.length !== this.vectorDim) {
+      throw new Error(
+        `epro-memory: search vector dimension mismatch — got ${vector.length}-dim but DB expects ${this.vectorDim}`,
+      );
+    }
+
+    // When decay is active, over-fetch to compensate for re-ranking
+    const useDecay = !skipDecay && this.decayConfig.enabled;
+    const fetchLimit = useDecay ? Math.max(limit * 3, 20) : limit;
+
+    let query = this.table!.vectorSearch(vector).limit(fetchLimit);
 
     if (categoryFilter) {
       assertCategory(categoryFilter);
@@ -165,18 +239,34 @@ export class MemoryDB {
     return results
       .map((row) => {
         const distance = (row._distance as number) ?? 0;
-        const score = 1 / (1 + distance);
-        return { entry: rowToEntry(row as Record<string, unknown>), score };
+        const vectorScore = 1 / (1 + distance);
+        const entry = rowToEntry(row as Record<string, unknown>);
+
+        const score = useDecay
+          ? computeDecayScore(
+              vectorScore,
+              entry.created_at,
+              entry.active_count,
+              this.decayConfig,
+            )
+          : vectorScore;
+
+        return { entry, score };
       })
-      .filter((r) => r.score >= minScore);
+      .sort((a, b) => b.score - a.score)
+      .filter((r) => r.score >= minScore)
+      .slice(0, limit);
   }
 
-  async findByCategory(category: MemoryCategory): Promise<AgentMemoryRow[]> {
+  async findByCategory(
+    category: MemoryCategory,
+    limit: number = 100,
+  ): Promise<AgentMemoryRow[]> {
     await this.ensureInit();
     assertCategory(category);
     const results = await this.table!.query()
       .where(`category = '${category}'`)
-      .limit(100)
+      .limit(limit)
       .toArray();
 
     return results.map((row) => rowToEntry(row as Record<string, unknown>));
@@ -313,15 +403,6 @@ export class MemoryDB {
   }
 
   /**
-   * List all memories, capped at 10,000 rows.
-   */
-  async listAll(): Promise<AgentMemoryRow[]> {
-    await this.ensureInit();
-    const results = await this.table!.query().limit(10_000).toArray();
-    return results.map((row) => rowToEntry(row as Record<string, unknown>));
-  }
-
-  /**
    * Two-phase lifecycle maintenance:
    * 1. TTL phase: delete memories older than memoryTTLDays (adjusted by active_count)
    * 2. Count phase: if over maxMemories, delete lowest-scored memories
@@ -346,7 +427,7 @@ export class MemoryDB {
 
     // Phase 1: TTL-based cleanup
     if (memoryTTLDays > 0) {
-      const allRows = await this.listAll();
+      const allRows = await this.getAll();
       const baseTTLMs = memoryTTLDays * 24 * 60 * 60 * 1000;
 
       for (const row of allRows) {
@@ -366,7 +447,7 @@ export class MemoryDB {
 
     // Phase 2: Count-based cleanup
     if (maxMemories > 0) {
-      const remaining = await this.listAll();
+      const remaining = await this.getAll();
       const unprotected = remaining.filter(
         (row) => !protectedCategories.has(row.category),
       );
@@ -431,5 +512,18 @@ export class MemoryDB {
         throw err;
       }
     });
+  }
+
+  /**
+   * Get all memories from the database.
+   * Used by QMD projection to generate daily summaries.
+   *
+   * @param maxLimit - Maximum number of records to return (default: 10000)
+   * @returns Array of all memory entries
+   */
+  async getAll(maxLimit: number = 10000): Promise<AgentMemoryRow[]> {
+    await this.ensureInit();
+    const results = await this.table!.query().limit(maxLimit).toArray();
+    return results.map((row) => rowToEntry(row as Record<string, unknown>));
   }
 }

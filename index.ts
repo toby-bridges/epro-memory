@@ -7,6 +7,7 @@
  * Hooks:
  * - before_agent_start: recall relevant memories, inject as <agent-experience>
  * - agent_end: extract memories from conversation, dedup, persist to LanceDB
+ * - heartbeat: trigger daily QMD projection (if enabled)
  */
 
 import { parseConfig, DEFAULTS, vectorDimsForModel } from "./config.js";
@@ -15,7 +16,21 @@ import { Embeddings } from "./embeddings.js";
 import { LlmClient } from "./llm.js";
 import { MemoryDeduplicator } from "./deduplicator.js";
 import { MemoryExtractor } from "./extractor.js";
-import type { PluginLogger } from "./types.js";
+import {
+  projectToQMD,
+  getLastProjectionTime,
+  setLastProjectionTime,
+  shouldRunProjection,
+  type ProjectionConfig,
+} from "./projector.js";
+import {
+  CheckpointManager,
+  type CheckpointConfig,
+  type ExtractionCheckpoint,
+} from "./checkpoint.js";
+import { MemoryReporter, type ReporterConfig } from "./reporter.js";
+import { BootstrapManager, type BootstrapConfig } from "./bootstrap.js";
+import type { ExtractionStats, PluginLogger } from "./types.js";
 
 type MoltbotPluginApi = {
   pluginConfig?: Record<string, unknown>;
@@ -63,13 +78,71 @@ const eproMemoryPlugin = {
       cfg.extractMinMessages ?? DEFAULTS.extractMinMessages;
     const extractMaxChars = cfg.extractMaxChars ?? DEFAULTS.extractMaxChars;
 
+    // QMD Projection config
+    const qmdProjectionConfig: ProjectionConfig = {
+      enabled: cfg.qmdProjection?.enabled ?? DEFAULTS.qmdProjection.enabled,
+      qmdPath: api.resolvePath(
+        cfg.qmdProjection?.qmdPath ?? DEFAULTS.qmdProjection.qmdPath,
+      ),
+      includeL1:
+        cfg.qmdProjection?.includeL1 ?? DEFAULTS.qmdProjection.includeL1,
+      categorySeparateFiles:
+        cfg.qmdProjection?.categorySeparateFiles ??
+        DEFAULTS.qmdProjection.categorySeparateFiles,
+      dailyTrigger:
+        cfg.qmdProjection?.dailyTrigger ?? DEFAULTS.qmdProjection.dailyTrigger,
+      intervalMs:
+        cfg.qmdProjection?.intervalMs ?? DEFAULTS.qmdProjection.intervalMs,
+    };
+
+    // Checkpoint config (P2-002: Resumable extraction)
+    const checkpointEnabled =
+      cfg.checkpoint?.enabled ?? DEFAULTS.checkpoint.enabled;
+    const checkpointPath = api.resolvePath(
+      cfg.checkpoint?.path ?? DEFAULTS.checkpoint.path,
+    );
+    const checkpointAutoRecover =
+      cfg.checkpoint?.autoRecoverOnStart ??
+      DEFAULTS.checkpoint.autoRecoverOnStart;
+
+    // Reporter config (P2-001: Memory change reporting)
+    const reportingEnabled =
+      cfg.reporting?.enabled ?? DEFAULTS.reporting.enabled;
+    const reporterConfig: ReporterConfig = {
+      enabled: reportingEnabled,
+      logPath: api.resolvePath(
+        cfg.reporting?.logPath ?? DEFAULTS.reporting.logPath,
+      ),
+      dailySummary:
+        cfg.reporting?.dailySummary ?? DEFAULTS.reporting.dailySummary,
+      notifyOnPivotal:
+        cfg.reporting?.notifyOnPivotal ?? DEFAULTS.reporting.notifyOnPivotal,
+    };
+
+    // Bootstrap config (P3-001: Pattern-to-Skill promotion)
+    const bootstrapEnabled =
+      cfg.bootstrap?.enabled ?? DEFAULTS.bootstrap.enabled;
+    const bootstrapConfig: BootstrapConfig = {
+      enabled: bootstrapEnabled,
+      patternPromotionThreshold:
+        cfg.bootstrap?.patternPromotionThreshold ??
+        DEFAULTS.bootstrap.patternPromotionThreshold,
+      skillDraftPath: api.resolvePath(
+        cfg.bootstrap?.skillDraftPath ?? DEFAULTS.bootstrap.skillDraftPath,
+      ),
+      minConfidence:
+        cfg.bootstrap?.minConfidence ?? DEFAULTS.bootstrap.minConfidence,
+    };
+
     // Initialize services
-    const vectorDim = vectorDimsForModel(embeddingModel);
-    const db = new MemoryDB(dbPath, vectorDim, logger);
+    const vectorDim =
+      cfg.embedding.dimensions ?? vectorDimsForModel(embeddingModel);
+    const db = new MemoryDB(dbPath, vectorDim, logger, cfg.decay);
     const embeddings = new Embeddings(
       cfg.embedding.apiKey,
       embeddingModel,
       cfg.embedding.baseUrl,
+      cfg.embedding.dimensions,
     );
     const llm = new LlmClient(cfg.llm.apiKey, llmModel, cfg.llm.baseUrl);
     const deduplicator = new MemoryDeduplicator(db, llm, logger);
@@ -81,13 +154,66 @@ const eproMemoryPlugin = {
       logger,
     );
 
+    // Initialize checkpoint manager (P2-002)
+    const checkpointMgr = checkpointEnabled
+      ? new CheckpointManager(checkpointPath, logger)
+      : null;
+
+    // Initialize reporter (P2-001)
+    const reporter = reportingEnabled
+      ? new MemoryReporter(reporterConfig, logger)
+      : null;
+
+    // Initialize bootstrap (P3-001)
+    const bootstrapMgr = bootstrapEnabled
+      ? new BootstrapManager(bootstrapConfig, logger, {
+          analyze: (prompt) => llm.complete(prompt),
+        })
+      : null;
+
     // Register service lifecycle
     api.registerService({
       id: "epro-memory",
-      start: () => {
+      start: async () => {
         logger.info(
-          `epro-memory: initialized (db: ${dbPath}, embed: ${embeddingModel}, llm: ${llmModel})`,
+          `epro-memory: initialized (db: ${dbPath}, embed: ${embeddingModel}, llm: ${llmModel}` +
+            (checkpointEnabled ? `, checkpoint: ${checkpointPath}` : "") +
+            ")",
         );
+
+        // Auto-recover incomplete extractions on startup (P2-002)
+        if (checkpointMgr && checkpointAutoRecover) {
+          try {
+            const resumeResults =
+              await extractor.resumeIncomplete(checkpointMgr);
+            if (resumeResults.length > 0) {
+              const total = resumeResults.reduce(
+                (acc, r) => ({
+                  created: acc.created + r.created,
+                  merged: acc.merged + r.merged,
+                  skipped: acc.skipped + r.skipped,
+                }),
+                { created: 0, merged: 0, skipped: 0 },
+              );
+              logger.info(
+                `epro-memory: auto-recovered ${resumeResults.length} incomplete extractions ` +
+                  `(created=${total.created}, merged=${total.merged}, skipped=${total.skipped})`,
+              );
+            }
+          } catch (err) {
+            logger.warn(`epro-memory: auto-recovery failed: ${String(err)}`);
+          }
+        }
+
+        // Load pending notifications on startup (P2-001)
+        if (reporter) {
+          await reporter.loadPendingNotifications();
+        }
+
+        // Load candidates index on startup (P3-001)
+        if (bootstrapMgr) {
+          await bootstrapMgr.loadCandidatesIndex();
+        }
       },
     });
 
@@ -161,11 +287,30 @@ const eproMemoryPlugin = {
             const sessionKey = ctx?.sessionKey ?? "unknown";
             const user = ctx?.agentId ?? "agent";
 
-            await extractor.extractAndPersist(
-              conversationText,
-              sessionKey,
-              user,
-            );
+            // Use checkpoint-based extraction if enabled (P2-002)
+            let stats: ExtractionStats;
+            if (checkpointMgr) {
+              stats = await extractor.extractWithCheckpoint(
+                conversationText,
+                sessionKey,
+                user,
+                checkpointMgr,
+              );
+            } else {
+              stats = await extractor.extractAndPersist(
+                conversationText,
+                sessionKey,
+                user,
+              );
+            }
+
+            // Report extraction results (P2-001)
+            if (reporter && (stats.created > 0 || stats.merged > 0)) {
+              const report = reporter.createReport(sessionKey, stats, [], user);
+              reporter.record(report).catch((err) => {
+                logger.warn(`epro-memory: reporter failed: ${String(err)}`);
+              });
+            }
 
             // Post-extraction maintenance: cleanup stale memories (awaited)
             if (
@@ -199,10 +344,10 @@ const eproMemoryPlugin = {
             // Post-extraction maintenance: compact fragments (fire-and-forget)
             if (optimizeAfterExtraction) {
               db.optimize()
-                .then((stats) => {
-                  if (stats) {
+                .then((optStats) => {
+                  if (optStats) {
                     logger.info(
-                      `epro-memory: optimize compacted ${stats.compaction.fragmentsRemoved} fragments, pruned ${stats.prune.oldVersionsRemoved} old versions`,
+                      `epro-memory: optimize compacted ${optStats.compaction.fragmentsRemoved} fragments, pruned ${optStats.prune.oldVersionsRemoved} old versions`,
                     );
                   }
                 })
@@ -215,6 +360,79 @@ const eproMemoryPlugin = {
           }
         },
       );
+    }
+
+    // Hook: heartbeat — trigger daily QMD projection
+    if (qmdProjectionConfig.enabled && qmdProjectionConfig.dailyTrigger) {
+      api.on("heartbeat", async () => {
+        try {
+          const lastProjection = await getLastProjectionTime(
+            qmdProjectionConfig.qmdPath,
+          );
+          const now = Date.now();
+
+          if (
+            !shouldRunProjection(
+              lastProjection,
+              qmdProjectionConfig.intervalMs,
+              now,
+            )
+          ) {
+            return;
+          }
+
+          logger.info("epro-memory: starting daily QMD projection");
+
+          const memories = await db.getAll();
+          const result = await projectToQMD(
+            memories,
+            qmdProjectionConfig,
+            qmdProjectionConfig.qmdPath,
+            logger,
+          );
+
+          await setLastProjectionTime(qmdProjectionConfig.qmdPath, now);
+
+          logger.info(
+            `epro-memory: QMD projection complete (${result.categoryFilesWritten} category files, ${result.totalMemories} memories)`,
+          );
+        } catch (err) {
+          logger.warn(`epro-memory: QMD projection failed: ${String(err)}`);
+        }
+      });
+    }
+
+    // Hook: heartbeat — daily summary report (P2-001)
+    if (reporter && reporterConfig.dailySummary) {
+      api.on("heartbeat", async () => {
+        try {
+          const filepath = await reporter.saveDailyReport();
+          if (filepath) {
+            logger.info(`epro-memory: daily summary saved to ${filepath}`);
+          }
+        } catch (err) {
+          logger.warn(`epro-memory: daily summary failed: ${String(err)}`);
+        }
+      });
+    }
+
+    // Hook: heartbeat — bootstrap pattern-to-skill promotion (P3-001)
+    if (bootstrapMgr) {
+      api.on("heartbeat", async () => {
+        try {
+          const patterns = await db.findByCategory("patterns", 10000);
+          for (const pattern of patterns) {
+            if (!bootstrapMgr.shouldConsider(pattern)) continue;
+
+            const candidate = await bootstrapMgr.checkPatternPromotion(pattern);
+            if (candidate) {
+              await bootstrapMgr.saveDraft(candidate);
+            }
+          }
+        } catch (err) {
+          logger.warn(`epro-memory: bootstrap failed: ${String(err)}`);
+        }
+      });
     }
   },
 };
@@ -280,5 +498,6 @@ export function sanitizeForContext(text: string): string {
   return text.replace(/<(\/?)([a-zA-Z])/g, "< $1$2");
 }
 
-export { extractConversationText };
+export { extractConversationText, CheckpointManager };
+export type { CheckpointConfig, ExtractionCheckpoint };
 export default eproMemoryPlugin;

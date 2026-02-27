@@ -227,7 +227,7 @@ describe("MemoryExtractor.extractAndPersist", () => {
     );
   });
 
-  it("skips merge for non-mergeable categories (events)", async () => {
+  it("creates instead of merge for non-mergeable categories (events)", async () => {
     mockLlm.completeJson.mockResolvedValue({
       memories: [
         { category: "events", abstract: "a", overview: "o", content: "c" },
@@ -238,13 +238,18 @@ describe("MemoryExtractor.extractAndPersist", () => {
       reason: "similar",
       matchId: "id",
     });
+    mockDb.store.mockResolvedValue({});
 
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
-    expect(stats.skipped).toBe(1);
+    expect(stats.created).toBe(1);
+    expect(stats.skipped).toBe(0);
     expect(mockDb.update).not.toHaveBeenCalled();
+    expect(mockDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "events", abstract: "a" }),
+    );
   });
 
-  it("skips merge for non-mergeable categories (cases)", async () => {
+  it("creates instead of merge for non-mergeable categories (cases)", async () => {
     mockLlm.completeJson.mockResolvedValue({
       memories: [
         { category: "cases", abstract: "a", overview: "o", content: "c" },
@@ -255,9 +260,11 @@ describe("MemoryExtractor.extractAndPersist", () => {
       reason: "similar",
       matchId: "id",
     });
+    mockDb.store.mockResolvedValue({});
 
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
-    expect(stats.skipped).toBe(1);
+    expect(stats.created).toBe(1);
+    expect(stats.skipped).toBe(0);
   });
 
   it("counts as skipped when processCandidate throws", async () => {
