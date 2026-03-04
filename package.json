@@ -30,10 +30,18 @@
   "dependencies": {
     "@lancedb/lancedb": "^0.23.0",
     "@sinclair/typebox": "0.34.47",
-    "openai": "^6.16.0"
+    "better-sqlite3": "^12.6.2",
+    "openai": "^6.16.0",
+    "sqlite-vec": "0.1.7-alpha.2"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
