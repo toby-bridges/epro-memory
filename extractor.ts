@@ -6,7 +6,6 @@
  * P2-002: Added checkpoint support for resumable extraction.
  */
 
-import type { MemoryDB } from "./db.js";
 import type { MemoryDeduplicator } from "./deduplicator.js";
 import type { Embeddings } from "./embeddings.js";
 import type { LlmClient } from "./llm.js";
@@ -18,13 +17,14 @@ import {
   type CandidateMemory,
   type ExtractionStats,
   type MemoryCategory,
+  type MemoryStore,
   type PluginLogger,
 } from "./types.js";
 import type { CheckpointManager, ExtractionCheckpoint } from "./checkpoint.js";
 
 export class MemoryExtractor {
   constructor(
-    private db: MemoryDB,
+    private db: MemoryStore,
     private embeddings: Embeddings,
     private llm: LlmClient,
     private deduplicator: MemoryDeduplicator,

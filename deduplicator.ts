@@ -4,13 +4,14 @@
  * Ported from OpenViking's memory_deduplicator.py.
  */
 
-import type { MemoryDB, MemorySearchResult } from "./db.js";
 import type { LlmClient } from "./llm.js";
 import { buildDedupPrompt } from "./prompts.js";
 import type {
   CandidateMemory,
   DedupDecision,
   DedupResult,
+  MemorySearchResult,
+  MemoryStore,
   PluginLogger,
 } from "./types.js";
 
@@ -20,7 +21,7 @@ const VALID_DECISIONS = new Set(["create", "merge", "skip"]);
 
 export class MemoryDeduplicator {
   constructor(
-    private db: MemoryDB,
+    private db: MemoryStore,
     private llm: LlmClient,
     private logger: PluginLogger,
   ) {}

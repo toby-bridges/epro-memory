@@ -11,7 +11,7 @@
  */
 
 import { parseConfig, DEFAULTS, vectorDimsForModel } from "./config.js";
-import { MemoryDB } from "./db.js";
+import { LanceDBStore } from "./lancedb-store.js";
 import { Embeddings } from "./embeddings.js";
 import { LlmClient } from "./llm.js";
 import { MemoryDeduplicator } from "./deduplicator.js";
@@ -30,7 +30,7 @@ import {
 } from "./checkpoint.js";
 import { MemoryReporter, type ReporterConfig } from "./reporter.js";
 import { BootstrapManager, type BootstrapConfig } from "./bootstrap.js";
-import type { ExtractionStats, PluginLogger } from "./types.js";
+import type { ExtractionStats, MemoryStore, PluginLogger } from "./types.js";
 
 type MoltbotPluginApi = {
   pluginConfig?: Record<string, unknown>;
@@ -137,7 +137,12 @@ const eproMemoryPlugin = {
     // Initialize services
     const vectorDim =
       cfg.embedding.dimensions ?? vectorDimsForModel(embeddingModel);
-    const db = new MemoryDB(dbPath, vectorDim, logger, cfg.decay);
+    const db: MemoryStore = new LanceDBStore(
+      dbPath,
+      vectorDim,
+      logger,
+      cfg.decay,
+    );
     const embeddings = new Embeddings(
       cfg.embedding.apiKey,
       embeddingModel,
@@ -333,7 +338,7 @@ const eproMemoryPlugin = {
             }
 
             // Post-extraction maintenance: auto-index (fire-and-forget)
-            if (autoIndex) {
+            if (autoIndex && db.ensureIndices) {
               db.ensureIndices(indexThreshold).catch((err) => {
                 logger.warn(
                   `epro-memory: ensureIndices failed: ${String(err)}`,
@@ -342,7 +347,7 @@ const eproMemoryPlugin = {
             }
 
             // Post-extraction maintenance: compact fragments (fire-and-forget)
-            if (optimizeAfterExtraction) {
+            if (optimizeAfterExtraction && db.optimize) {
               db.optimize()
                 .then((optStats) => {
                   if (optStats) {
