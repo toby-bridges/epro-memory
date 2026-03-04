@@ -104,12 +104,16 @@ export class SQLiteStore implements MemoryStore {
   }
 
   private ensureDb(): BetterSqlite3.Database {
-    if (!this.db) throw new Error("SQLiteStore not initialized. Call init() first.");
+    if (!this.db)
+      throw new Error("SQLiteStore not initialized. Call init() first.");
     return this.db;
   }
 
   async store(
-    entry: Omit<AgentMemoryRow, "id" | "created_at" | "updated_at" | "active_count">,
+    entry: Omit<
+      AgentMemoryRow,
+      "id" | "created_at" | "updated_at" | "active_count"
+    >,
   ): Promise<AgentMemoryRow> {
     const db = this.ensureDb();
 
@@ -131,17 +135,28 @@ export class SQLiteStore implements MemoryStore {
     };
 
     const txn = db.transaction(() => {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO agent_memories (id, category, abstract, overview, content, source_session, active_count, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        row.id, row.category, row.abstract, row.overview, row.content,
-        row.source_session, row.active_count, row.created_at, row.updated_at,
+      `,
+      ).run(
+        row.id,
+        row.category,
+        row.abstract,
+        row.overview,
+        row.content,
+        row.source_session,
+        row.active_count,
+        row.created_at,
+        row.updated_at,
       );
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO agent_memory_vectors (id, embedding) VALUES (?, ?)
-      `).run(row.id, vecToBuffer(row.vector));
+      `,
+      ).run(row.id, vecToBuffer(row.vector));
     });
     txn();
 
@@ -152,11 +167,17 @@ export class SQLiteStore implements MemoryStore {
     const db = this.ensureDb();
     assertUuid(id);
 
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT m.*, v.embedding FROM agent_memories m
       LEFT JOIN agent_memory_vectors v ON m.id = v.id
       WHERE m.id = ?
-    `).get(id) as (Record<string, unknown> & { embedding?: Buffer }) | undefined;
+    `,
+      )
+      .get(id) as
+      | (Record<string, unknown> & { embedding?: Buffer })
+      | undefined;
 
     if (!row) return null;
     return this.rowToEntry(row);
@@ -180,21 +201,28 @@ export class SQLiteStore implements MemoryStore {
     const updated = { ...existing, ...safeFields, updated_at: Date.now() };
 
     const txn = db.transaction(() => {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE agent_memories SET
           category = ?, abstract = ?, overview = ?, content = ?,
           active_count = ?, updated_at = ?
         WHERE id = ?
-      `).run(
-        updated.category, updated.abstract, updated.overview, updated.content,
-        updated.active_count, updated.updated_at, id,
+      `,
+      ).run(
+        updated.category,
+        updated.abstract,
+        updated.overview,
+        updated.content,
+        updated.active_count,
+        updated.updated_at,
+        id,
       );
 
       if (fields.vector) {
         db.prepare(`DELETE FROM agent_memory_vectors WHERE id = ?`).run(id);
-        db.prepare(`INSERT INTO agent_memory_vectors (id, embedding) VALUES (?, ?)`).run(
-          id, vecToBuffer(updated.vector),
-        );
+        db.prepare(
+          `INSERT INTO agent_memory_vectors (id, embedding) VALUES (?, ?)`,
+        ).run(id, vecToBuffer(updated.vector));
       }
     });
     txn();
@@ -205,7 +233,9 @@ export class SQLiteStore implements MemoryStore {
     assertUuid(id);
 
     const txn = db.transaction(() => {
-      const result = db.prepare(`DELETE FROM agent_memories WHERE id = ?`).run(id);
+      const result = db
+        .prepare(`DELETE FROM agent_memories WHERE id = ?`)
+        .run(id);
       db.prepare(`DELETE FROM agent_memory_vectors WHERE id = ?`).run(id);
       return result.changes > 0;
     });
@@ -230,76 +260,80 @@ export class SQLiteStore implements MemoryStore {
     const useDecay = !skipDecay && this.decayConfig.enabled;
     const fetchLimit = useDecay ? Math.max(limit * 3, 20) : limit;
 
-    // sqlite-vec KNN search
-    const vecResults = db.prepare(`
-      SELECT id, distance FROM agent_memory_vectors
-      WHERE embedding MATCH ?
-      ORDER BY distance
-      LIMIT ?
-    `).all(vecToBuffer(vector), fetchLimit) as Array<{ id: string; distance: number }>;
+    // Wrap in deferred transaction for read consistency
+    const txn = db.transaction(() => {
+      // sqlite-vec KNN search
+      const vecResults = db
+        .prepare(
+          `
+        SELECT id, distance FROM agent_memory_vectors
+        WHERE embedding MATCH ?
+        ORDER BY distance
+        LIMIT ?
+      `,
+        )
+        .all(vecToBuffer(vector), fetchLimit) as Array<{
+        id: string;
+        distance: number;
+      }>;
 
-    if (vecResults.length === 0) return [];
+      if (vecResults.length === 0) return [];
 
-    // Fetch full rows for matched IDs
-    const ids = vecResults.map((r) => r.id);
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = db.prepare(`
-      SELECT * FROM agent_memories WHERE id IN (${placeholders})
-    `).all(...ids) as Array<Record<string, unknown>>;
+      // Fetch full rows + vectors in a single JOIN (avoids N+1)
+      const ids = vecResults.map((r) => r.id);
+      // Safe: placeholders generated programmatically, IDs use parameter binding
+      const placeholders = ids.map(() => "?").join(",");
+      const rows = db
+        .prepare(
+          `
+        SELECT m.*, v.embedding FROM agent_memories m
+        LEFT JOIN agent_memory_vectors v ON m.id = v.id
+        WHERE m.id IN (${placeholders})
+      `,
+        )
+        .all(...ids) as Array<Record<string, unknown> & { embedding?: Buffer }>;
 
-    const rowMap = new Map<string, Record<string, unknown>>();
-    for (const row of rows) {
-      rowMap.set(row.id as string, row);
-    }
-
-    // Build results with scores
-    const results: MemorySearchResult[] = [];
-    for (const vr of vecResults) {
-      const row = rowMap.get(vr.id);
-      if (!row) continue;
-
-      if (categoryFilter) {
-        assertCategory(categoryFilter);
-        if (row.category !== categoryFilter) continue;
+      const rowMap = new Map<
+        string,
+        Record<string, unknown> & { embedding?: Buffer }
+      >();
+      for (const row of rows) {
+        rowMap.set(row.id as string, row);
       }
 
-      const vectorScore = 1 / (1 + vr.distance);
+      // Build results with scores
+      const results: MemorySearchResult[] = [];
+      for (const vr of vecResults) {
+        const row = rowMap.get(vr.id);
+        if (!row) continue;
 
-      // Retrieve vector for this entry
-      const vecRow = db.prepare(
-        `SELECT embedding FROM agent_memory_vectors WHERE id = ?`,
-      ).get(vr.id) as { embedding: Buffer } | undefined;
-      const entryVector = vecRow ? bufferToVec(vecRow.embedding) : [];
+        if (categoryFilter) {
+          assertCategory(categoryFilter);
+          if (row.category !== categoryFilter) continue;
+        }
 
-      const entry: AgentMemoryRow = {
-        id: row.id as string,
-        category: row.category as MemoryCategory,
-        abstract: row.abstract as string,
-        overview: row.overview as string,
-        content: row.content as string,
-        vector: entryVector,
-        source_session: row.source_session as string,
-        active_count: row.active_count as number,
-        created_at: row.created_at as number,
-        updated_at: row.updated_at as number,
-      };
+        const vectorScore = 1 / (1 + vr.distance);
+        const entry = this.rowToEntry(row);
 
-      const score = useDecay
-        ? computeDecayScore(
-            vectorScore,
-            entry.created_at,
-            entry.active_count,
-            this.decayConfig,
-          )
-        : vectorScore;
+        const score = useDecay
+          ? computeDecayScore(
+              vectorScore,
+              entry.created_at,
+              entry.active_count,
+              this.decayConfig,
+            )
+          : vectorScore;
 
-      results.push({ entry, score });
-    }
+        results.push({ entry, score });
+      }
 
-    return results
-      .sort((a, b) => b.score - a.score)
-      .filter((r) => r.score >= minScore)
-      .slice(0, limit);
+      return results
+        .sort((a, b) => b.score - a.score)
+        .filter((r) => r.score >= minScore)
+        .slice(0, limit);
+    });
+
+    return txn();
   }
 
   async findByCategory(
@@ -309,12 +343,18 @@ export class SQLiteStore implements MemoryStore {
     const db = this.ensureDb();
     assertCategory(category);
 
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT m.*, v.embedding FROM agent_memories m
       LEFT JOIN agent_memory_vectors v ON m.id = v.id
       WHERE m.category = ?
       LIMIT ?
-    `).all(category, limit) as Array<Record<string, unknown> & { embedding?: Buffer }>;
+    `,
+      )
+      .all(category, limit) as Array<
+      Record<string, unknown> & { embedding?: Buffer }
+    >;
 
     return rows.map((row) => this.rowToEntry(row));
   }
@@ -322,18 +362,24 @@ export class SQLiteStore implements MemoryStore {
   async getAll(maxLimit: number = 10000): Promise<AgentMemoryRow[]> {
     const db = this.ensureDb();
 
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT m.*, v.embedding FROM agent_memories m
       LEFT JOIN agent_memory_vectors v ON m.id = v.id
       LIMIT ?
-    `).all(maxLimit) as Array<Record<string, unknown> & { embedding?: Buffer }>;
+    `,
+      )
+      .all(maxLimit) as Array<Record<string, unknown> & { embedding?: Buffer }>;
 
     return rows.map((row) => this.rowToEntry(row));
   }
 
   async countRows(): Promise<number> {
     const db = this.ensureDb();
-    const result = db.prepare(`SELECT COUNT(*) as count FROM agent_memories`).get() as { count: number };
+    const result = db
+      .prepare(`SELECT COUNT(*) as count FROM agent_memories`)
+      .get() as { count: number };
     return result.count;
   }
 
@@ -341,9 +387,11 @@ export class SQLiteStore implements MemoryStore {
     const db = this.ensureDb();
     assertUuid(id);
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE agent_memories SET active_count = active_count + 1, updated_at = ? WHERE id = ?
-    `).run(Date.now(), id);
+    `,
+    ).run(Date.now(), id);
   }
 
   async maintain(options: MaintainOptions): Promise<MaintainResult> {
@@ -437,7 +485,9 @@ export class SQLiteStore implements MemoryStore {
     // Indices are created at init time; this is a no-op for SQLite
   }
 
-  private rowToEntry(row: Record<string, unknown> & { embedding?: Buffer }): AgentMemoryRow {
+  private rowToEntry(
+    row: Record<string, unknown> & { embedding?: Buffer },
+  ): AgentMemoryRow {
     return {
       id: row.id as string,
       category: row.category as MemoryCategory,
