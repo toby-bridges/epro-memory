@@ -12,6 +12,7 @@
 
 import { parseConfig, DEFAULTS, vectorDimsForModel } from "./config.js";
 import { LanceDBStore } from "./lancedb-store.js";
+import { SQLiteStore } from "./sqlite-store.js";
 import { Embeddings } from "./embeddings.js";
 import { LlmClient } from "./llm.js";
 import { MemoryDeduplicator } from "./deduplicator.js";
@@ -137,12 +138,16 @@ const eproMemoryPlugin = {
     // Initialize services
     const vectorDim =
       cfg.embedding.dimensions ?? vectorDimsForModel(embeddingModel);
-    const db: MemoryStore = new LanceDBStore(
-      dbPath,
-      vectorDim,
-      logger,
-      cfg.decay,
-    );
+    const backend = cfg.backend ?? DEFAULTS.backend;
+    let db: MemoryStore;
+    if (backend === "sqlite") {
+      const sqliteDbPath = api.resolvePath(
+        cfg.sqliteDbPath ?? DEFAULTS.sqliteDbPath,
+      );
+      db = new SQLiteStore(sqliteDbPath, vectorDim, logger, cfg.decay);
+    } else {
+      db = new LanceDBStore(dbPath, vectorDim, logger, cfg.decay);
+    }
     const embeddings = new Embeddings(
       cfg.embedding.apiKey,
       embeddingModel,
@@ -180,8 +185,14 @@ const eproMemoryPlugin = {
     api.registerService({
       id: "epro-memory",
       start: async () => {
+        await db.init();
+
+        const dbLabel =
+          backend === "sqlite"
+            ? api.resolvePath(cfg.sqliteDbPath ?? DEFAULTS.sqliteDbPath)
+            : dbPath;
         logger.info(
-          `epro-memory: initialized (db: ${dbPath}, embed: ${embeddingModel}, llm: ${llmModel}` +
+          `epro-memory: initialized (backend: ${backend}, db: ${dbLabel}, embed: ${embeddingModel}, llm: ${llmModel}` +
             (checkpointEnabled ? `, checkpoint: ${checkpointPath}` : "") +
             ")",
         );
