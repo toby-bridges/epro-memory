@@ -284,7 +284,7 @@ Design goals: **100% implemented, zero gaps.**
 
 ### Phase 2 Backlog (from user feedback) — COMPLETED
 
-- ✅ **Memory cleanup / lifecycle management** — Added `deleteById()`, `listAll()`, `maintain()` with two-phase cleanup (TTL expiration with active_count grace + count-based cap with activity/recency scoring). Profile memories protected by default. Config: `cleanupAfterExtraction` (opt-in), `maxMemories`, `memoryTTLDays`.
+- ✅ **Memory cleanup / lifecycle management** — Added `deleteById()`, `getAll()`, `maintain()` with two-phase cleanup (TTL expiration with active_count grace + count-based cap with activity/recency scoring). Profile memories protected by default. Config: `cleanupAfterExtraction` (opt-in), `maxMemories`, `memoryTTLDays`.
 - ✅ **LanceDB compaction** — Added `optimize()` method calling `table.optimize({ cleanupOlderThan })` as fire-and-forget after extraction. Config: `optimizeAfterExtraction` (default true).
 - ✅ **Retrieval scaling** — Added `countRows()`, `ensureIndices()` with bitmap index on `category` (always) and IVF_PQ vector index when rows >= threshold. Config: `autoIndex` (default true), `indexThreshold` (default 1000).
 
