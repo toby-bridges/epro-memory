@@ -70,3 +70,55 @@ export type PluginLogger = {
   warn: (msg: string) => void;
   error: (msg: string) => void;
 };
+
+export type MemorySearchResult = {
+  entry: AgentMemoryRow;
+  score: number;
+};
+
+export type OptimizeResult = {
+  compaction: { fragmentsRemoved: number; fragmentsAdded: number };
+  prune: { bytesRemoved: number; oldVersionsRemoved: number };
+};
+
+export type MaintainOptions = {
+  maxMemories?: number;
+  memoryTTLDays?: number;
+  protectedCategories?: Set<MemoryCategory>;
+};
+
+export type MaintainResult = {
+  deleted: number;
+  reason: string;
+};
+
+export interface MemoryStore {
+  init(): Promise<void>;
+  close?(): Promise<void>;
+  store(
+    entry: Omit<
+      AgentMemoryRow,
+      "id" | "created_at" | "updated_at" | "active_count"
+    >,
+  ): Promise<AgentMemoryRow>;
+  getById(id: string): Promise<AgentMemoryRow | null>;
+  update(id: string, fields: Partial<AgentMemoryRow>): Promise<void>;
+  deleteById(id: string): Promise<boolean>;
+  search(
+    vector: number[],
+    limit: number,
+    minScore: number,
+    categoryFilter?: MemoryCategory,
+    skipDecay?: boolean,
+  ): Promise<MemorySearchResult[]>;
+  findByCategory(
+    category: MemoryCategory,
+    limit?: number,
+  ): Promise<AgentMemoryRow[]>;
+  getAll(maxLimit?: number): Promise<AgentMemoryRow[]>;
+  countRows(): Promise<number>;
+  incrementActiveCount(id: string): Promise<void>;
+  maintain(options: MaintainOptions): Promise<MaintainResult>;
+  optimize?(cleanupOlderThanDays?: number): Promise<OptimizeResult | null>;
+  ensureIndices?(vectorIndexThreshold?: number): Promise<void>;
+}
