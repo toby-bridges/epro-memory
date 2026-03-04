@@ -56,7 +56,11 @@ const BootstrapConfig = Type.Object({
 const EproConfigSchema = Type.Object({
   embedding: EmbeddingConfig,
   llm: LlmConfig,
+  backend: Type.Optional(
+    Type.Union([Type.Literal("lancedb"), Type.Literal("sqlite")]),
+  ),
   dbPath: Type.Optional(Type.String()),
+  sqliteDbPath: Type.Optional(Type.String()),
   autoCapture: Type.Optional(Type.Boolean()),
   autoRecall: Type.Optional(Type.Boolean()),
   recallLimit: Type.Optional(Type.Number()),
@@ -86,7 +90,9 @@ export type BootstrapConfigType = Static<typeof BootstrapConfig>;
 export const DEFAULTS = {
   embeddingModel: "text-embedding-3-small",
   llmModel: "gpt-4o-mini",
+  backend: "lancedb" as const,
   dbPath: "~/.clawdbot/memory/epro-lancedb",
+  sqliteDbPath: "~/.clawdbot/memory/epro.db",
   autoCapture: true,
   autoRecall: true,
   recallLimit: 5,
@@ -218,6 +224,16 @@ export function parseConfig(raw: unknown): EproConfig {
           assertNumericField(`${parent}.${field}`, nested[field]);
         }
       }
+    }
+  }
+
+  // Validate backend before cast
+  if (raw && typeof raw === "object") {
+    const b = (raw as Record<string, unknown>).backend;
+    if (b !== undefined && b !== "lancedb" && b !== "sqlite") {
+      throw new Error(
+        `epro-memory: backend must be "lancedb" or "sqlite", got: ${JSON.stringify(b)}`,
+      );
     }
   }
 
