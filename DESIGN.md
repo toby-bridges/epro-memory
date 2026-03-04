@@ -288,6 +288,11 @@ Design goals: **100% implemented, zero gaps.**
 - ✅ **LanceDB compaction** — Added `optimize()` method calling `table.optimize({ cleanupOlderThan })` as fire-and-forget after extraction. Config: `optimizeAfterExtraction` (default true).
 - ✅ **Retrieval scaling** — Added `countRows()`, `ensureIndices()` with bitmap index on `category` (always) and IVF_PQ vector index when rows >= threshold. Config: `autoIndex` (default true), `indexThreshold` (default 1000).
 
+### Phase 3 Backlog (future)
+
+- ⏳ **Bayesian confidence scoring** — Replace `active_count` counter with directional `confidence` probability field. Bayesian update on recall (positive signal), time decay toward prior when idle. Integrate into decay scoring formula as `confidence` weight. Minimal pipeline change: only affects recall read/write path, no extraction/dedup changes. Key open question: feedback signal source — start with "recall = positive + time decay" as minimum viable version; richer signals (user confirmation/contradiction) require a feedback channel that doesn't exist yet.
+- ⏳ **Memory primitives / atomic units** — See `agent-research/docs/memory/discussion-memory-primitives.md`. Whether to decompose AgentMemoryRow into finer-grained knowledge units (facts, steps, relations). Pending architectural decision.
+
 ### Quality Additions (beyond original scope)
 
 - UUID / category whitelist input validation
