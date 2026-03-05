@@ -184,6 +184,11 @@ const eproMemoryPlugin = {
     // Register service lifecycle
     api.registerService({
       id: "epro-memory",
+      stop: async () => {
+        if (typeof (db as any).close === "function") {
+          await (db as any).close();
+        }
+      },
       start: async () => {
         await db.init();
 
