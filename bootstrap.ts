@@ -402,13 +402,23 @@ Respond in JSON format:
   generateSkillDraft(candidate: SkillCandidate): string {
     const escapedDescription = candidate.description.replace(/"/g, '\\"');
 
+    // Sanitize fields to prevent frontmatter injection:
+    // Strip newlines so LLM output cannot inject extra YAML keys or delimiters.
+    const safeName = candidate.name.split(/[\r\n]/)[0].trim();
+    const safeTriggers = candidate.triggers.map((t) =>
+      t.replace(/[\r\n]+/g, " ").trim(),
+    );
+    const safeSteps = candidate.steps.map((s) =>
+      s.replace(/[\r\n]+/g, " ").trim(),
+    );
+
     return `---
-name: ${candidate.name}
-description: "${escapedDescription}"
+name: ${safeName}
+description: "${escapedDescription.replace(/[\r\n]+/g, " ")}"
 metadata: {"source": "epro-memory-bootstrap", "patternId": "${candidate.sourcePatternId}", "confidence": ${candidate.confidence.toFixed(2)}}
 ---
 
-# ${candidate.name}
+# ${safeName}
 
 > 自动生成自 epro-memory patterns
 > 置信度: ${(candidate.confidence * 100).toFixed(0)}%
@@ -416,11 +426,11 @@ metadata: {"source": "epro-memory-bootstrap", "patternId": "${candidate.sourcePa
 
 ## 触发条件
 
-${candidate.triggers.map((t) => `- ${t}`).join("\n")}
+${safeTriggers.map((t) => `- ${t}`).join("\n")}
 
 ## 执行步骤
 
-${candidate.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+${safeSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
 ---
 
