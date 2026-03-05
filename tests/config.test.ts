@@ -242,6 +242,68 @@ describe("nested numeric field pre-cast validation", () => {
   });
 });
 
+describe("boolean field pre-cast validation", () => {
+  const base = { embedding: { apiKey: "k" }, llm: { apiKey: "k" } };
+
+  it("rejects string autoCapture", () => {
+    expect(() =>
+      parseConfig({ ...base, autoCapture: "yes" as unknown }),
+    ).toThrow("autoCapture must be a boolean, got string");
+  });
+
+  it("rejects string autoRecall", () => {
+    expect(() =>
+      parseConfig({ ...base, autoRecall: "true" as unknown }),
+    ).toThrow("autoRecall must be a boolean, got string");
+  });
+
+  it("rejects number autoCapture", () => {
+    expect(() => parseConfig({ ...base, autoCapture: 1 as unknown })).toThrow(
+      "autoCapture must be a boolean, got number",
+    );
+  });
+
+  it("rejects string qmdProjection.enabled", () => {
+    expect(() =>
+      parseConfig({ ...base, qmdProjection: { enabled: "true" } }),
+    ).toThrow("qmdProjection.enabled must be a boolean, got string");
+  });
+
+  it("rejects string bootstrap.enabled", () => {
+    expect(() =>
+      parseConfig({ ...base, bootstrap: { enabled: "yes" } }),
+    ).toThrow("bootstrap.enabled must be a boolean, got string");
+  });
+
+  it("rejects string checkpoint.enabled", () => {
+    expect(() => parseConfig({ ...base, checkpoint: { enabled: 1 } })).toThrow(
+      "checkpoint.enabled must be a boolean, got number",
+    );
+  });
+
+  it("rejects string reporting.enabled", () => {
+    expect(() =>
+      parseConfig({ ...base, reporting: { enabled: "false" } }),
+    ).toThrow("reporting.enabled must be a boolean, got string");
+  });
+
+  it("accepts valid boolean values", () => {
+    const cfg = parseConfig({
+      ...base,
+      autoCapture: false,
+      autoRecall: true,
+      qmdProjection: { enabled: false },
+      bootstrap: { enabled: true },
+      checkpoint: { enabled: false },
+      reporting: { enabled: true },
+    });
+    expect(cfg.autoCapture).toBe(false);
+    expect(cfg.autoRecall).toBe(true);
+    expect(cfg.qmdProjection?.enabled).toBe(false);
+    expect(cfg.bootstrap?.enabled).toBe(true);
+  });
+});
+
 describe("DEFAULTS", () => {
   it("has expected values", () => {
     expect(DEFAULTS.embeddingModel).toBe("text-embedding-3-small");

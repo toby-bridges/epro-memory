@@ -165,6 +165,31 @@ function assertRange(
   }
 }
 
+const BOOLEAN_FIELDS = [
+  "autoCapture",
+  "autoRecall",
+  "optimizeAfterExtraction",
+  "autoIndex",
+  "cleanupAfterExtraction",
+] as const;
+
+const NESTED_BOOLEAN_FIELDS: Array<{
+  parent: string;
+  fields: readonly string[];
+}> = [
+  { parent: "decay", fields: ["enabled"] },
+  {
+    parent: "qmdProjection",
+    fields: ["enabled", "includeL1", "categorySeparateFiles", "dailyTrigger"],
+  },
+  { parent: "checkpoint", fields: ["enabled", "autoRecoverOnStart"] },
+  {
+    parent: "reporting",
+    fields: ["enabled", "dailySummary", "notifyOnPivotal"],
+  },
+  { parent: "bootstrap", fields: ["enabled"] },
+];
+
 const NUMERIC_FIELDS = [
   "recallLimit",
   "recallMinScore",
@@ -191,6 +216,17 @@ const NESTED_NUMERIC_FIELDS: Array<{
 ];
 
 /**
+ * Validate that a value is a proper boolean (not a string or number).
+ * Throws with a descriptive message if invalid.
+ */
+function assertBooleanField(path: string, v: unknown): void {
+  if (v === undefined) return;
+  if (typeof v !== "boolean") {
+    throw new Error(`epro-memory: ${path} must be a boolean, got ${typeof v}`);
+  }
+}
+
+/**
  * Validate that a value is a proper number (not null, not NaN, not a string).
  * Throws with a descriptive message if invalid.
  */
@@ -210,6 +246,21 @@ export function parseConfig(raw: unknown): EproConfig {
   // Reject non-numeric types on numeric fields BEFORE Value.Cast coerces them
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
+
+    // Top-level boolean fields
+    for (const field of BOOLEAN_FIELDS) {
+      assertBooleanField(field, obj[field]);
+    }
+
+    // Nested boolean fields
+    for (const { parent, fields } of NESTED_BOOLEAN_FIELDS) {
+      const nested = obj[parent] as Record<string, unknown> | undefined;
+      if (nested && typeof nested === "object") {
+        for (const field of fields) {
+          assertBooleanField(`${parent}.${field}`, nested[field]);
+        }
+      }
+    }
 
     // Top-level numeric fields
     for (const field of NUMERIC_FIELDS) {
