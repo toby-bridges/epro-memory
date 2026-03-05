@@ -94,7 +94,10 @@ describe("plugin service lifecycle", () => {
   it("calls db.close on stop when close is available", async () => {
     const close = vi.fn().mockResolvedValue(undefined);
     const sqliteStore = makeMockStore({ close });
-    const { service } = await registerPlugin({ backend: "sqlite", sqliteStore });
+    const { service } = await registerPlugin({
+      backend: "sqlite",
+      sqliteStore,
+    });
 
     if (!service.stop) {
       throw new Error("service.stop is missing");
@@ -107,7 +110,10 @@ describe("plugin service lifecycle", () => {
 
   it("does not throw on stop when backend close is undefined", async () => {
     const lanceStore = makeMockStore();
-    const { service } = await registerPlugin({ backend: "lancedb", lanceStore });
+    const { service } = await registerPlugin({
+      backend: "lancedb",
+      lanceStore,
+    });
 
     if (!service.stop) {
       throw new Error("service.stop is missing");
@@ -115,5 +121,22 @@ describe("plugin service lifecycle", () => {
 
     await service.start();
     await service.stop();
+  });
+
+  it("logs warning and does not throw when db.close rejects", async () => {
+    const close = vi.fn().mockRejectedValue(new Error("close failed"));
+    const sqliteStore = makeMockStore({ close });
+    const { service } = await registerPlugin({
+      backend: "sqlite",
+      sqliteStore,
+    });
+
+    if (!service.stop) {
+      throw new Error("service.stop is missing");
+    }
+
+    await service.start();
+    // Must resolve without throwing
+    await expect(service.stop()).resolves.toBeUndefined();
   });
 });

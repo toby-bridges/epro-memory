@@ -186,7 +186,11 @@ const eproMemoryPlugin = {
       id: "epro-memory",
       stop: async () => {
         if (typeof (db as any).close === "function") {
-          await (db as any).close();
+          try {
+            await (db as any).close();
+          } catch (err) {
+            logger.warn(`epro-memory: db.close() failed: ${String(err)}`);
+          }
         }
       },
       start: async () => {
