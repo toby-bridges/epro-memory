@@ -190,6 +190,13 @@ export class SQLiteStore implements MemoryStore {
     const existing = await this.getById(id);
     if (!existing) return;
 
+    if (fields.vector && fields.vector.length !== this.vectorDim) {
+      throw new Error(
+        `epro-memory: vector dimension mismatch — got ${fields.vector.length}-dim vector ` +
+          `but DB expects ${this.vectorDim}`,
+      );
+    }
+
     // Prevent callers from overwriting immutable fields
     const {
       id: _id,

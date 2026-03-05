@@ -314,6 +314,19 @@ describe("SQLiteStore", () => {
     expect(result.reason).toBe("no cleanup needed");
   });
 
+  it("maintain does not crash or delete when all rows are protected", async () => {
+    await store.store(makeEntry("profile", 1));
+    await store.store(makeEntry("profile", 2));
+    await store.store(makeEntry("profile", 3));
+
+    // maxMemories=1 but all rows are protected (profile)
+    const result = await store.maintain({ maxMemories: 1 });
+    expect(result.deleted).toBe(0);
+
+    const remaining = await store.countRows();
+    expect(remaining).toBe(3);
+  });
+
   // --- optimize ---
 
   it("optimize runs VACUUM without error", async () => {
@@ -337,6 +350,13 @@ describe("SQLiteStore", () => {
     await expect(store.store(entry)).rejects.toThrow(
       "vector dimension mismatch",
     );
+  });
+
+  it("update throws on vector dimension mismatch", async () => {
+    const row = await store.store(makeEntry("events", 1));
+    await expect(
+      store.update(row.id, { vector: [1, 2] }), // 2-dim vs 3-dim
+    ).rejects.toThrow("vector dimension mismatch");
   });
 
   // --- init creates directory ---
