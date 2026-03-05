@@ -215,6 +215,12 @@ export class CheckpointManager {
     processedIndex: number,
     stage: ExtractionStage = "storing",
   ): ExtractionCheckpoint {
+    if (processedIndex <= checkpoint.processedIndex) {
+      throw new Error(
+        `epro-memory: processedIndex must be strictly increasing — ` +
+          `got ${processedIndex} but current is ${checkpoint.processedIndex}`,
+      );
+    }
     return {
       ...checkpoint,
       stage,
