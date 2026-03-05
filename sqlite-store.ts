@@ -260,22 +260,44 @@ export class SQLiteStore implements MemoryStore {
     const useDecay = !skipDecay && this.decayConfig.enabled;
     const fetchLimit = useDecay ? Math.max(limit * 3, 20) : limit;
 
+    // Validate category early (before entering transaction)
+    if (categoryFilter) assertCategory(categoryFilter);
+
     // Wrap in deferred transaction for read consistency
     const txn = db.transaction(() => {
-      // sqlite-vec KNN search
-      const vecResults = db
-        .prepare(
-          `
-        SELECT id, distance FROM agent_memory_vectors
-        WHERE embedding MATCH ?
-        ORDER BY distance
-        LIMIT ?
-      `,
-        )
-        .all(vecToBuffer(vector), fetchLimit) as Array<{
-        id: string;
-        distance: number;
-      }>;
+      // sqlite-vec KNN search — push category filter into WHERE clause
+      // so KNN only considers rows in the target category
+      let vecResults: Array<{ id: string; distance: number }>;
+      if (categoryFilter) {
+        vecResults = db
+          .prepare(
+            `
+          SELECT id, distance FROM agent_memory_vectors
+          WHERE embedding MATCH ?
+            AND id IN (SELECT id FROM agent_memories WHERE category = ?)
+          ORDER BY distance
+          LIMIT ?
+        `,
+          )
+          .all(vecToBuffer(vector), categoryFilter, fetchLimit) as Array<{
+          id: string;
+          distance: number;
+        }>;
+      } else {
+        vecResults = db
+          .prepare(
+            `
+          SELECT id, distance FROM agent_memory_vectors
+          WHERE embedding MATCH ?
+          ORDER BY distance
+          LIMIT ?
+        `,
+          )
+          .all(vecToBuffer(vector), fetchLimit) as Array<{
+          id: string;
+          distance: number;
+        }>;
+      }
 
       if (vecResults.length === 0) return [];
 
@@ -306,11 +328,6 @@ export class SQLiteStore implements MemoryStore {
       for (const vr of vecResults) {
         const row = rowMap.get(vr.id);
         if (!row) continue;
-
-        if (categoryFilter) {
-          assertCategory(categoryFilter);
-          if (row.category !== categoryFilter) continue;
-        }
 
         const vectorScore = 1 / (1 + vr.distance);
         const entry = this.rowToEntry(row);

@@ -121,6 +121,40 @@ describe("SQLiteStore", () => {
     }
   });
 
+  it("search category filter is not truncated by global top-K", async () => {
+    // Regression: category filter must be pushed into KNN, not applied post-KNN.
+    // If post-KNN, the target category gets crowded out by closer other-category vectors.
+    const targetVec = [1, 1.1, 1.2];
+
+    // Insert 1 target-category memory with exact vector match
+    await store.store({
+      category: "patterns",
+      abstract: "target",
+      overview: "o",
+      content: "c",
+      vector: targetVec,
+      source_session: "s",
+    });
+
+    // Flood with 20 closer other-category memories (same vector = distance 0)
+    for (let i = 0; i < 20; i++) {
+      await store.store({
+        category: "events",
+        abstract: `flood-${i}`,
+        overview: "o",
+        content: "c",
+        vector: targetVec,
+        source_session: "s",
+      });
+    }
+
+    // Search for "patterns" with limit=5 — must find the 1 target
+    const results = await store.search(targetVec, 5, 0.01, "patterns");
+    expect(results.length).toBe(1);
+    expect(results[0].entry.category).toBe("patterns");
+    expect(results[0].entry.abstract).toBe("target");
+  });
+
   it("search respects minScore filter", async () => {
     await store.store(makeEntry("events", 1));
     await store.store(makeEntry("events", 100));
