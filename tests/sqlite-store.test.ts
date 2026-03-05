@@ -155,6 +155,37 @@ describe("SQLiteStore", () => {
     expect(results[0].entry.abstract).toBe("target");
   });
 
+  it("search category filter can fill limit within target category", async () => {
+    // Even with heavy cross-category crowding, limit should apply inside category.
+    const targetVec = [1, 1.1, 1.2];
+
+    for (let i = 0; i < 6; i++) {
+      await store.store({
+        category: "patterns",
+        abstract: `pattern-${i}`,
+        overview: "o",
+        content: "c",
+        vector: targetVec,
+        source_session: "s",
+      });
+    }
+
+    for (let i = 0; i < 30; i++) {
+      await store.store({
+        category: "events",
+        abstract: `event-${i}`,
+        overview: "o",
+        content: "c",
+        vector: targetVec,
+        source_session: "s",
+      });
+    }
+
+    const results = await store.search(targetVec, 5, 0.01, "patterns");
+    expect(results).toHaveLength(5);
+    expect(results.every((r) => r.entry.category === "patterns")).toBe(true);
+  });
+
   it("search respects minScore filter", async () => {
     await store.store(makeEntry("events", 1));
     await store.store(makeEntry("events", 100));

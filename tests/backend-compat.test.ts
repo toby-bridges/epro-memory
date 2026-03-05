@@ -156,6 +156,47 @@ describeIfIntegration("Backend compatibility (SQLite vs LanceDB)", () => {
     expect(lanceResults[0].entry.abstract).toContain("-1");
   });
 
+  it("search category filter semantics match under cross-category crowding", async () => {
+    const queryVec = [0.1, 0.2, 0.3];
+
+    // One target-category row
+    await runOnBoth((s) =>
+      s.store({
+        category: "patterns",
+        abstract: "target-pattern",
+        overview: "o",
+        content: "c",
+        vector: queryVec,
+        source_session: "s",
+      }),
+    );
+
+    // Many other-category rows with same vector to crowd top-K
+    for (let i = 0; i < 20; i++) {
+      await runOnBoth((s) =>
+        s.store({
+          category: "events",
+          abstract: `crowd-${i}`,
+          overview: "o",
+          content: "c",
+          vector: queryVec,
+          source_session: "s",
+        }),
+      );
+    }
+
+    const [sqliteResults, lanceResults] = await runOnBoth((s) =>
+      s.search(queryVec, 5, 0.01, "patterns"),
+    );
+
+    expect(sqliteResults).toHaveLength(1);
+    expect(lanceResults).toHaveLength(1);
+    expect(sqliteResults[0].entry.category).toBe("patterns");
+    expect(lanceResults[0].entry.category).toBe("patterns");
+    expect(sqliteResults[0].entry.abstract).toBe("target-pattern");
+    expect(lanceResults[0].entry.abstract).toBe("target-pattern");
+  });
+
   it("incrementActiveCount works identically", async () => {
     const sqliteRow = await sqliteStore.store(makeEntry("events", 1));
     const lanceRow = await lanceStore.store(makeEntry("events", 1));
