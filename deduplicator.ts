@@ -1,6 +1,11 @@
 /**
  * Memory deduplicator.
- * Two-stage pipeline: vector pre-filter -> LLM decision (CREATE/MERGE/SKIP).
+ * Two-stage pipeline: vector pre-filter -> LLM two-tier decision.
+ *
+ * Decision model (from OpenViking v3.3.1):
+ *   Candidate-level: skip | create | none
+ *   Per-existing: merge | delete
+ *
  * Ported from OpenViking's memory_deduplicator.py.
  */
 
@@ -10,14 +15,16 @@ import type {
   CandidateMemory,
   DedupDecision,
   DedupResult,
+  ExistingMemoryAction,
   MemorySearchResult,
   MemoryStore,
   PluginLogger,
 } from "./types.js";
 
 const SIMILARITY_THRESHOLD = 0.7;
-const MAX_SIMILAR_FOR_PROMPT = 3;
-const VALID_DECISIONS = new Set(["create", "merge", "skip"]);
+const MAX_SIMILAR_FOR_PROMPT = 5;
+const VALID_DECISIONS = new Set<DedupDecision>(["create", "skip", "none"]);
+const VALID_ACTIONS = new Set(["merge", "delete"]);
 
 export class MemoryDeduplicator {
   constructor(
@@ -43,6 +50,7 @@ export class MemoryDeduplicator {
       return {
         decision: "create",
         reason: "No similar memories found",
+        actions: [],
       };
     }
 
@@ -58,7 +66,7 @@ export class MemoryDeduplicator {
     const existingFormatted = topSimilar
       .map(
         (r, i) =>
-          `${i + 1}. [${r.entry.category}] ${r.entry.abstract}\n   Overview: ${r.entry.overview}\n   Score: ${r.score.toFixed(3)}`,
+          `${i + 1}. id=${r.entry.id}\n   category=${r.entry.category}\n   score=${r.score.toFixed(3)}\n   abstract=${r.entry.abstract}`,
       )
       .join("\n");
 
@@ -73,6 +81,13 @@ export class MemoryDeduplicator {
       const data = await this.llm.completeJson<{
         decision: string;
         reason: string;
+        list?: Array<{
+          id?: string;
+          index?: number;
+          decide?: string;
+          reason?: string;
+        }>;
+        // Legacy fields for backward compat
         match_index?: number;
       }>(prompt);
 
@@ -80,33 +95,118 @@ export class MemoryDeduplicator {
         this.logger.warn(
           "epro-memory: dedup LLM returned unparseable response, defaulting to CREATE",
         );
-        return { decision: "create", reason: "LLM response unparseable" };
+        return { decision: "create", reason: "LLM response unparseable", actions: [] };
       }
 
-      const decision = (data.decision?.toLowerCase() ??
-        "create") as DedupDecision;
-      if (!VALID_DECISIONS.has(decision)) {
-        return {
-          decision: "create",
-          reason: `Unknown decision: ${data.decision}`,
-        };
-      }
-
-      // Resolve merge target from LLM's match_index (1-based), fall back to top result
-      const idx = data.match_index;
-      const matchEntry =
-        typeof idx === "number" && idx >= 1 && idx <= topSimilar.length
-          ? topSimilar[idx - 1]
-          : topSimilar[0];
-
-      return {
-        decision,
-        reason: data.reason ?? "",
-        matchId: decision === "merge" ? matchEntry?.entry.id : undefined,
-      };
+      return this.parseDecisionPayload(data, topSimilar);
     } catch (err) {
       this.logger.warn(`epro-memory: dedup LLM failed: ${String(err)}`);
-      return { decision: "create", reason: `LLM failed: ${String(err)}` };
+      return { decision: "create", reason: `LLM failed: ${String(err)}`, actions: [] };
     }
+  }
+
+  private parseDecisionPayload(
+    data: {
+      decision: string;
+      reason: string;
+      list?: Array<{
+        id?: string;
+        index?: number;
+        decide?: string;
+        reason?: string;
+      }>;
+      match_index?: number;
+    },
+    similar: MemorySearchResult[],
+  ): DedupResult {
+    const rawDecision = (data.decision?.toLowerCase() ?? "create").trim();
+    let reason = data.reason ?? "";
+
+    // Map decision, with legacy "merge" -> "none" compat
+    let decision: DedupDecision;
+    if (rawDecision === "merge") {
+      decision = "none";
+    } else if (VALID_DECISIONS.has(rawDecision as DedupDecision)) {
+      decision = rawDecision as DedupDecision;
+    } else {
+      decision = "create";
+    }
+
+    // Parse per-item actions from "list"
+    const rawList = Array.isArray(data.list) ? data.list : [];
+    const similarById = new Map(similar.map((s) => [s.entry.id, s]));
+    const actions: ExistingMemoryAction[] = [];
+
+    // Legacy compat: if decision was "merge" with no list, synthesize a merge action
+    if (rawDecision === "merge" && rawList.length === 0 && similar.length > 0) {
+      const idx = data.match_index;
+      const target =
+        typeof idx === "number" && idx >= 1 && idx <= similar.length
+          ? similar[idx - 1]
+          : similar[0];
+      actions.push({
+        id: target.entry.id,
+        action: "merge",
+        reason: "Legacy merge mapped to none+merge",
+      });
+      if (!reason) reason = "Legacy merge mapped to none+merge";
+      return { decision, reason, actions };
+    }
+
+    for (const item of rawList) {
+      if (!item || typeof item !== "object") continue;
+
+      const actionStr = (item.decide ?? "").toLowerCase().trim();
+      if (!VALID_ACTIONS.has(actionStr)) continue;
+
+      // Resolve target memory: prefer id, fall back to index
+      let targetId: string | undefined;
+      if (typeof item.id === "string" && similarById.has(item.id)) {
+        targetId = item.id;
+      } else if (typeof item.index === "number") {
+        const idx = item.index;
+        // 1-based preferred, 0-based fallback
+        if (idx >= 1 && idx <= similar.length) {
+          targetId = similar[idx - 1].entry.id;
+        } else if (idx >= 0 && idx < similar.length) {
+          targetId = similar[idx].entry.id;
+        }
+      }
+
+      if (!targetId) continue;
+
+      // Deduplicate: skip if we already have an action for this id
+      if (actions.some((a) => a.id === targetId)) continue;
+
+      actions.push({
+        id: targetId,
+        action: actionStr as "merge" | "delete",
+        reason: item.reason ?? "",
+      });
+    }
+
+    // Enforce hard constraints
+    if (decision === "skip") {
+      return { decision, reason, actions: [] };
+    }
+
+    const hasMerge = actions.some((a) => a.action === "merge");
+
+    // create + merge -> normalize to none
+    if (decision === "create" && hasMerge) {
+      decision = "none";
+      reason = `${reason} | normalized:create+merge->none`.trim().replace(/^\| /, "");
+    }
+
+    // create can only carry delete actions
+    if (decision === "create") {
+      return {
+        decision,
+        reason,
+        actions: actions.filter((a) => a.action === "delete"),
+      };
+    }
+
+    return { decision, reason, actions };
   }
 }

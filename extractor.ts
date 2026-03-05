@@ -15,6 +15,7 @@ import {
   MERGE_SUPPORTED_CATEGORIES,
   MEMORY_CATEGORIES,
   type CandidateMemory,
+  type DedupResult,
   type ExtractionStats,
   type MemoryCategory,
   type MemoryStore,
@@ -36,7 +37,12 @@ export class MemoryExtractor {
     sessionKey: string,
     user: string,
   ): Promise<ExtractionStats> {
-    const stats: ExtractionStats = { created: 0, merged: 0, skipped: 0 };
+    const stats: ExtractionStats = {
+      created: 0,
+      merged: 0,
+      deleted: 0,
+      skipped: 0,
+    };
 
     // Step 1: LLM extraction
     const candidates = await this.extractCandidates(conversationText, user);
@@ -59,7 +65,7 @@ export class MemoryExtractor {
     }
 
     this.logger.info(
-      `epro-memory: created=${stats.created}, merged=${stats.merged}, skipped=${stats.skipped}`,
+      `epro-memory: created=${stats.created}, merged=${stats.merged}, deleted=${stats.deleted}, skipped=${stats.skipped}`,
     );
     return stats;
   }
@@ -118,7 +124,38 @@ export class MemoryExtractor {
 
     const result = await this.deduplicator.deduplicate(candidate, vector);
 
+    await this.executeDedup(result, candidate, vector, sessionKey, stats);
+  }
+
+  /**
+   * Execute the two-tier dedup decision.
+   *
+   * - skip: do nothing
+   * - create: store candidate + execute delete actions
+   * - none: execute per-item merge/delete actions (don't store candidate)
+   */
+  private async executeDedup(
+    result: DedupResult,
+    candidate: CandidateMemory,
+    vector: number[],
+    sessionKey: string,
+    stats: ExtractionStats,
+  ): Promise<void> {
+    if (result.decision === "skip") {
+      stats.skipped++;
+      return;
+    }
+
     if (result.decision === "create") {
+      // Execute any delete actions first
+      for (const action of result.actions) {
+        if (action.action === "delete") {
+          if (await this.db.deleteById(action.id)) {
+            stats.deleted++;
+          }
+        }
+      }
+      // Store the candidate
       await this.db.store({
         category: candidate.category,
         abstract: candidate.abstract,
@@ -128,28 +165,29 @@ export class MemoryExtractor {
         source_session: sessionKey,
       });
       stats.created++;
-    } else if (result.decision === "merge") {
-      if (
-        MERGE_SUPPORTED_CATEGORIES.has(candidate.category) &&
-        result.matchId
-      ) {
-        await this.handleMerge(candidate, result.matchId);
-        stats.merged++;
-      } else {
-        // events/cases don't support merge — create as new record to avoid data loss
-        await this.db.store({
-          category: candidate.category,
-          abstract: candidate.abstract,
-          overview: candidate.overview,
-          content: candidate.content,
-          vector,
-          source_session: sessionKey,
-        });
-        stats.created++;
-      }
-    } else {
-      // skip
+      return;
+    }
+
+    // decision === "none": execute per-item actions
+    if (result.actions.length === 0) {
       stats.skipped++;
+      return;
+    }
+
+    for (const action of result.actions) {
+      if (action.action === "delete") {
+        if (await this.db.deleteById(action.id)) {
+          stats.deleted++;
+        }
+      } else if (action.action === "merge") {
+        if (MERGE_SUPPORTED_CATEGORIES.has(candidate.category)) {
+          await this.handleMerge(candidate, action.id);
+          stats.merged++;
+        } else {
+          // events/cases don't support merge — skip to avoid data loss
+          stats.skipped++;
+        }
+      }
     }
   }
 
@@ -259,7 +297,12 @@ export class MemoryExtractor {
     user: string,
     checkpointMgr: CheckpointManager,
   ): Promise<ExtractionStats> {
-    const stats: ExtractionStats = { created: 0, merged: 0, skipped: 0 };
+    const stats: ExtractionStats = {
+      created: 0,
+      merged: 0,
+      deleted: 0,
+      skipped: 0,
+    };
 
     // Check for existing checkpoint (resume case)
     let checkpoint = await checkpointMgr.load(sessionKey);
@@ -311,7 +354,7 @@ export class MemoryExtractor {
     await checkpointMgr.clear(sessionKey);
 
     this.logger.info(
-      `epro-memory: created=${stats.created}, merged=${stats.merged}, skipped=${stats.skipped}`,
+      `epro-memory: created=${stats.created}, merged=${stats.merged}, deleted=${stats.deleted}, skipped=${stats.skipped}`,
     );
     return stats;
   }
@@ -360,7 +403,12 @@ export class MemoryExtractor {
     checkpoint: ExtractionCheckpoint,
     checkpointMgr: CheckpointManager,
   ): Promise<ExtractionStats> {
-    const stats: ExtractionStats = { created: 0, merged: 0, skipped: 0 };
+    const stats: ExtractionStats = {
+      created: 0,
+      merged: 0,
+      deleted: 0,
+      skipped: 0,
+    };
     const { sessionKey, candidates, processedIndex } = checkpoint;
     const startIndex = processedIndex + 1;
 

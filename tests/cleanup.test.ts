@@ -182,6 +182,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("deletes memories past TTL", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const oldRow = makeRow({
       id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       category: "events",
@@ -206,6 +207,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("TTL grace period increases with active_count", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     // 35 days old, TTL=30, but active_count=5 → adjusted TTL = 30 * 1.5 = 45 days
     const activeRow = makeRow({
       id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -224,6 +226,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("profile memories are never auto-deleted by TTL", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const profileRow = makeRow({
       id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       category: "profile",
@@ -242,6 +245,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("profile memories are never deleted by count phase", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const profileRow = makeRow({
       id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       category: "profile",
@@ -267,6 +271,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("count-based cleanup deletes lowest-scored first", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const now = Date.now();
     const rows: AgentMemoryRow[] = [
       makeRow({
@@ -303,6 +308,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("combined TTL + count phases", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const now = Date.now();
     const ttlExpired = makeRow({
       id: "11111111-1111-1111-1111-111111111111",
@@ -339,6 +345,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("returns 'no cleanup needed' when nothing to do", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     vi.spyOn(db, "countRows").mockResolvedValue(0);
     vi.spyOn(db, "getAll").mockResolvedValue([]);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);
@@ -350,6 +357,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("skips TTL phase when memoryTTLDays is 0", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     vi.spyOn(db, "countRows").mockResolvedValue(0);
     const getAllSpy = vi.spyOn(db, "getAll").mockResolvedValue([]);
 
@@ -360,6 +368,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("skips count phase when maxMemories is 0", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const now = Date.now();
     const rows = [
       makeRow({
@@ -379,6 +388,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("custom protectedCategories override default", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const now = Date.now();
     const profileRow = makeRow({
       id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -407,6 +417,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("handles empty unprotected set in count phase gracefully", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     const rows = [
       makeRow({
         id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -436,6 +447,7 @@ describe("MemoryDB.maintain() unit", () => {
 
   it("passes actual row count to getAll to avoid 10k cap truncation", async () => {
     const db = new MemoryDB("/tmp/fake-maint", 3, silentLogger);
+    (db as any).table = {};
     vi.spyOn(db, "countRows").mockResolvedValue(15000);
     const getAllSpy = vi.spyOn(db, "getAll").mockResolvedValue([]);
     vi.spyOn(db, "deleteById").mockResolvedValue(true);

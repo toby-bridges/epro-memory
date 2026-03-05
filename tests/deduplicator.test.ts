@@ -59,7 +59,7 @@ describe("MemoryDeduplicator", () => {
     expect(mockLlm.completeJson).toHaveBeenCalledOnce();
   });
 
-  it("respects match_index=1 from LLM", async () => {
+  it("legacy merge with match_index=1 maps to none + merge action", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(3));
     mockLlm.completeJson.mockResolvedValue({
       decision: "merge",
@@ -67,11 +67,17 @@ describe("MemoryDeduplicator", () => {
       match_index: 1,
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
-    expect(result.decision).toBe("merge");
-    expect(result.matchId).toBe("id-1");
+    expect(result.decision).toBe("none");
+    expect(result.actions).toEqual([
+      {
+        id: "id-1",
+        action: "merge",
+        reason: "Legacy merge mapped to none+merge",
+      },
+    ]);
   });
 
-  it("respects match_index=2 from LLM", async () => {
+  it("legacy merge with match_index=2 targets correct entry", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(3));
     mockLlm.completeJson.mockResolvedValue({
       decision: "merge",
@@ -79,10 +85,11 @@ describe("MemoryDeduplicator", () => {
       match_index: 2,
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
-    expect(result.matchId).toBe("id-2");
+    expect(result.decision).toBe("none");
+    expect(result.actions[0]).toMatchObject({ id: "id-2", action: "merge" });
   });
 
-  it("respects match_index=3 from LLM", async () => {
+  it("legacy merge with match_index=3 targets correct entry", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(3));
     mockLlm.completeJson.mockResolvedValue({
       decision: "merge",
@@ -90,10 +97,11 @@ describe("MemoryDeduplicator", () => {
       match_index: 3,
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
-    expect(result.matchId).toBe("id-3");
+    expect(result.decision).toBe("none");
+    expect(result.actions[0]).toMatchObject({ id: "id-3", action: "merge" });
   });
 
-  it("falls back to first result when match_index is out of bounds", async () => {
+  it("legacy merge falls back to first result when match_index out of bounds", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(2));
     mockLlm.completeJson.mockResolvedValue({
       decision: "merge",
@@ -101,20 +109,22 @@ describe("MemoryDeduplicator", () => {
       match_index: 5,
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
-    expect(result.matchId).toBe("id-1");
+    expect(result.decision).toBe("none");
+    expect(result.actions[0]).toMatchObject({ id: "id-1", action: "merge" });
   });
 
-  it("falls back to first result when match_index is missing", async () => {
+  it("legacy merge falls back to first result when match_index missing", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(2));
     mockLlm.completeJson.mockResolvedValue({
       decision: "merge",
       reason: "merge",
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
-    expect(result.matchId).toBe("id-1");
+    expect(result.decision).toBe("none");
+    expect(result.actions[0]).toMatchObject({ id: "id-1", action: "merge" });
   });
 
-  it("sets matchId to undefined for create decision", async () => {
+  it("returns empty actions for create decision", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(1));
     mockLlm.completeJson.mockResolvedValue({
       decision: "create",
@@ -122,10 +132,10 @@ describe("MemoryDeduplicator", () => {
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
     expect(result.decision).toBe("create");
-    expect(result.matchId).toBeUndefined();
+    expect(result.actions).toEqual([]);
   });
 
-  it("sets matchId to undefined for skip decision", async () => {
+  it("returns empty actions for skip decision", async () => {
     mockDb.search.mockResolvedValue(makeSimilar(1));
     mockLlm.completeJson.mockResolvedValue({
       decision: "skip",
@@ -133,7 +143,53 @@ describe("MemoryDeduplicator", () => {
     });
     const result = await makeDedup().deduplicate(candidate, [0.1]);
     expect(result.decision).toBe("skip");
-    expect(result.matchId).toBeUndefined();
+    expect(result.actions).toEqual([]);
+  });
+
+  it("parses two-tier list with merge and delete actions", async () => {
+    mockDb.search.mockResolvedValue(makeSimilar(3));
+    mockLlm.completeJson.mockResolvedValue({
+      decision: "none",
+      reason: "update existing",
+      list: [
+        { id: "id-1", decide: "merge", reason: "same topic" },
+        { id: "id-3", decide: "delete", reason: "fully invalidated" },
+      ],
+    });
+    const result = await makeDedup().deduplicate(candidate, [0.1]);
+    expect(result.decision).toBe("none");
+    expect(result.actions).toEqual([
+      { id: "id-1", action: "merge", reason: "same topic" },
+      { id: "id-3", action: "delete", reason: "fully invalidated" },
+    ]);
+  });
+
+  it("normalizes create + merge to none", async () => {
+    mockDb.search.mockResolvedValue(makeSimilar(2));
+    mockLlm.completeJson.mockResolvedValue({
+      decision: "create",
+      reason: "new info",
+      list: [{ id: "id-1", decide: "merge", reason: "related" }],
+    });
+    const result = await makeDedup().deduplicate(candidate, [0.1]);
+    expect(result.decision).toBe("none");
+    expect(result.actions).toEqual([
+      { id: "id-1", action: "merge", reason: "related" },
+    ]);
+  });
+
+  it("create decision only carries delete actions", async () => {
+    mockDb.search.mockResolvedValue(makeSimilar(2));
+    mockLlm.completeJson.mockResolvedValue({
+      decision: "create",
+      reason: "new info",
+      list: [{ id: "id-1", decide: "delete", reason: "obsolete" }],
+    });
+    const result = await makeDedup().deduplicate(candidate, [0.1]);
+    expect(result.decision).toBe("create");
+    expect(result.actions).toEqual([
+      { id: "id-1", action: "delete", reason: "obsolete" },
+    ]);
   });
 
   it("defaults to create for unknown decision", async () => {

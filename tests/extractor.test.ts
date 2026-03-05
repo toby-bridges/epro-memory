@@ -6,6 +6,7 @@ const mockDb = {
   update: vi.fn(),
   findByCategory: vi.fn(),
   getById: vi.fn(),
+  deleteById: vi.fn(),
 };
 const mockEmbeddings = { embed: vi.fn() };
 const mockLlm = { completeJson: vi.fn(), complete: vi.fn() };
@@ -31,13 +32,13 @@ describe("MemoryExtractor.extractAndPersist", () => {
   it("returns zero stats when LLM extracts no memories", async () => {
     mockLlm.completeJson.mockResolvedValue({ memories: [] });
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
-    expect(stats).toEqual({ created: 0, merged: 0, skipped: 0 });
+    expect(stats).toEqual({ created: 0, merged: 0, deleted: 0, skipped: 0 });
   });
 
   it("returns zero stats when LLM returns null", async () => {
     mockLlm.completeJson.mockResolvedValue(null);
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
-    expect(stats).toEqual({ created: 0, merged: 0, skipped: 0 });
+    expect(stats).toEqual({ created: 0, merged: 0, deleted: 0, skipped: 0 });
   });
 
   it("filters out invalid categories from LLM output", async () => {
@@ -50,6 +51,7 @@ describe("MemoryExtractor.extractAndPersist", () => {
     mockDedup.deduplicate.mockResolvedValue({
       decision: "create",
       reason: "new",
+      actions: [],
     });
     mockDb.store.mockResolvedValue({});
 
@@ -69,6 +71,7 @@ describe("MemoryExtractor.extractAndPersist", () => {
     mockDedup.deduplicate.mockResolvedValue({
       decision: "create",
       reason: "new",
+      actions: [],
     });
     mockDb.store.mockResolvedValue({});
 
@@ -81,7 +84,12 @@ describe("MemoryExtractor.extractAndPersist", () => {
   it("creates profile when none exists", async () => {
     mockLlm.completeJson.mockResolvedValue({
       memories: [
-        { category: "profile", abstract: "User info", overview: "## Info", content: "Details" },
+        {
+          category: "profile",
+          abstract: "User info",
+          overview: "## Info",
+          content: "Details",
+        },
       ],
     });
     mockDb.findByCategory.mockResolvedValue([]);
@@ -99,7 +107,12 @@ describe("MemoryExtractor.extractAndPersist", () => {
       // First call: extraction
       .mockResolvedValueOnce({
         memories: [
-          { category: "profile", abstract: "New info", overview: "## New", content: "New details" },
+          {
+            category: "profile",
+            abstract: "New info",
+            overview: "## New",
+            content: "New details",
+          },
         ],
       })
       // Second call: merge
@@ -142,7 +155,13 @@ describe("MemoryExtractor.extractAndPersist", () => {
       .mockResolvedValueOnce(null); // merge fails
 
     mockDb.findByCategory.mockResolvedValue([
-      { id: "eid", category: "profile", abstract: "Old", overview: "O", content: "Old" },
+      {
+        id: "eid",
+        category: "profile",
+        abstract: "Old",
+        overview: "O",
+        content: "Old",
+      },
     ]);
     mockDb.update.mockResolvedValue(undefined);
 
@@ -168,6 +187,7 @@ describe("MemoryExtractor.extractAndPersist", () => {
     mockDedup.deduplicate.mockResolvedValue({
       decision: "create",
       reason: "new",
+      actions: [],
     });
     mockDb.store.mockResolvedValue({});
 
@@ -184,6 +204,7 @@ describe("MemoryExtractor.extractAndPersist", () => {
     mockDedup.deduplicate.mockResolvedValue({
       decision: "skip",
       reason: "duplicate",
+      actions: [],
     });
 
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
@@ -195,7 +216,12 @@ describe("MemoryExtractor.extractAndPersist", () => {
     mockLlm.completeJson
       .mockResolvedValueOnce({
         memories: [
-          { category: "preferences", abstract: "a", overview: "o", content: "c" },
+          {
+            category: "preferences",
+            abstract: "a",
+            overview: "o",
+            content: "c",
+          },
         ],
       })
       .mockResolvedValueOnce({
@@ -205,9 +231,9 @@ describe("MemoryExtractor.extractAndPersist", () => {
       });
 
     mockDedup.deduplicate.mockResolvedValue({
-      decision: "merge",
+      decision: "none",
       reason: "overlap",
-      matchId: "match-id",
+      actions: [{ id: "match-id", action: "merge", reason: "overlap" }],
     });
     mockDb.getById.mockResolvedValue({
       id: "match-id",
@@ -227,44 +253,60 @@ describe("MemoryExtractor.extractAndPersist", () => {
     );
   });
 
-  it("creates instead of merge for non-mergeable categories (events)", async () => {
+  it("skips merge for non-mergeable categories (events)", async () => {
     mockLlm.completeJson.mockResolvedValue({
       memories: [
         { category: "events", abstract: "a", overview: "o", content: "c" },
       ],
     });
     mockDedup.deduplicate.mockResolvedValue({
-      decision: "merge",
+      decision: "none",
       reason: "similar",
-      matchId: "id",
+      actions: [{ id: "id", action: "merge", reason: "similar" }],
     });
-    mockDb.store.mockResolvedValue({});
 
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
-    expect(stats.created).toBe(1);
-    expect(stats.skipped).toBe(0);
+    expect(stats.skipped).toBe(1);
+    expect(stats.created).toBe(0);
     expect(mockDb.update).not.toHaveBeenCalled();
-    expect(mockDb.store).toHaveBeenCalledWith(
-      expect.objectContaining({ category: "events", abstract: "a" }),
-    );
+    expect(mockDb.store).not.toHaveBeenCalled();
   });
 
-  it("creates instead of merge for non-mergeable categories (cases)", async () => {
+  it("skips merge for non-mergeable categories (cases)", async () => {
     mockLlm.completeJson.mockResolvedValue({
       memories: [
         { category: "cases", abstract: "a", overview: "o", content: "c" },
       ],
     });
     mockDedup.deduplicate.mockResolvedValue({
-      decision: "merge",
+      decision: "none",
       reason: "similar",
-      matchId: "id",
+      actions: [{ id: "id", action: "merge", reason: "similar" }],
     });
+
+    const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
+    expect(stats.skipped).toBe(1);
+    expect(stats.created).toBe(0);
+  });
+
+  it("executes delete actions in create decision", async () => {
+    mockLlm.completeJson.mockResolvedValue({
+      memories: [
+        { category: "events", abstract: "a", overview: "o", content: "c" },
+      ],
+    });
+    mockDedup.deduplicate.mockResolvedValue({
+      decision: "create",
+      reason: "new, old obsolete",
+      actions: [{ id: "old-id", action: "delete", reason: "obsolete" }],
+    });
+    mockDb.deleteById.mockResolvedValue(true);
     mockDb.store.mockResolvedValue({});
 
     const stats = await makeExtractor().extractAndPersist("conv", "s1", "user");
     expect(stats.created).toBe(1);
-    expect(stats.skipped).toBe(0);
+    expect(stats.deleted).toBe(1);
+    expect(mockDb.deleteById).toHaveBeenCalledWith("old-id");
   });
 
   it("counts as skipped when processCandidate throws", async () => {

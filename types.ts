@@ -49,18 +49,26 @@ export type AgentMemoryRow = {
   updated_at: number;
 };
 
-/** Dedup decision from LLM. */
-export type DedupDecision = "create" | "merge" | "skip";
+/** Candidate-level dedup decision from LLM. */
+export type DedupDecision = "create" | "skip" | "none";
+
+/** Per-existing-memory action from LLM dedup. */
+export type ExistingMemoryAction = {
+  id: string;
+  action: "merge" | "delete";
+  reason: string;
+};
 
 export type DedupResult = {
   decision: DedupDecision;
   reason: string;
-  matchId?: string; // ID of existing memory to merge with
+  actions: ExistingMemoryAction[];
 };
 
 export type ExtractionStats = {
   created: number;
   merged: number;
+  deleted: number;
   skipped: number;
 };
 
