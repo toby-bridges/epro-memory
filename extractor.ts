@@ -347,7 +347,13 @@ export class MemoryExtractor {
 
       // Save checkpoint after each candidate
       checkpoint = checkpointMgr.updateProgress(checkpoint, i, "storing");
-      await checkpointMgr.save(checkpoint);
+      try {
+        await checkpointMgr.save(checkpoint);
+      } catch (err) {
+        this.logger.warn(
+          `epro-memory: checkpoint save failed at index ${i}: ${String(err)}`,
+        );
+      }
     }
 
     // Extraction complete: clear checkpoint
@@ -436,7 +442,13 @@ export class MemoryExtractor {
         i,
         "storing",
       );
-      await checkpointMgr.save(currentCheckpoint);
+      try {
+        await checkpointMgr.save(currentCheckpoint);
+      } catch (err) {
+        this.logger.warn(
+          `epro-memory: checkpoint save failed at index ${i}: ${String(err)}`,
+        );
+      }
     }
 
     // Clear checkpoint on completion
