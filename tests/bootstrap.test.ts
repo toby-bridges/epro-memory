@@ -202,6 +202,59 @@ describe("BootstrapManager", () => {
     });
   });
 
+  describe("generateSkillDraft YAML special chars in name", () => {
+    it("should produce parseable frontmatter when name contains colons", () => {
+      const candidate: SkillCandidate = {
+        name: "skill: name with colon",
+        description: "desc",
+        triggers: ["trigger"],
+        steps: ["step"],
+        sourcePatternId: "pattern-123",
+        confidence: 0.8,
+        identifiedAt: Date.now(),
+        draftGenerated: false,
+      };
+
+      const draft = manager.generateSkillDraft(candidate);
+      const lines = draft.split("\n");
+      const firstSep = lines.indexOf("---");
+      const secondSep = lines.indexOf("---", firstSep + 1);
+      const frontmatter = lines.slice(firstSep + 1, secondSep).join("\n");
+
+      // Name must be sanitized to kebab-case (no colons in value)
+      expect(frontmatter).toContain("name: skill-name-with-colon");
+      const nameLine = frontmatter
+        .split("\n")
+        .find((l) => l.startsWith("name:"))!;
+      // The value after "name: " should have no colons
+      expect(nameLine.slice("name: ".length)).not.toContain(":");
+    });
+
+    it("should produce parseable frontmatter when name contains hash and quotes", () => {
+      const candidate: SkillCandidate = {
+        name: 'my "quoted" skill#v2',
+        description: "desc",
+        triggers: ["trigger"],
+        steps: ["step"],
+        sourcePatternId: "pattern-123",
+        confidence: 0.8,
+        identifiedAt: Date.now(),
+        draftGenerated: false,
+      };
+
+      const draft = manager.generateSkillDraft(candidate);
+      const lines = draft.split("\n");
+      const firstSep = lines.indexOf("---");
+      const secondSep = lines.indexOf("---", firstSep + 1);
+      const frontmatter = lines.slice(firstSep + 1, secondSep).join("\n");
+
+      // No quotes or hash in the name value
+      expect(frontmatter).toContain("name: my-quoted-skill-v2");
+      expect(frontmatter).not.toContain("#");
+      expect(frontmatter).not.toContain('"quoted"');
+    });
+  });
+
   describe("generateSkillDraft frontmatter boundary hardening", () => {
     it("should not allow trigger text to introduce extra frontmatter delimiters", () => {
       const candidate: SkillCandidate = {

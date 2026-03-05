@@ -404,7 +404,7 @@ Respond in JSON format:
 
     // Sanitize fields to prevent frontmatter injection:
     // Strip newlines so LLM output cannot inject extra YAML keys or delimiters.
-    const safeName = candidate.name.split(/[\r\n]/)[0].trim();
+    const safeName = sanitizeSkillName(candidate.name.split(/[\r\n]/)[0]);
     const safeTriggers = candidate.triggers.map((t) =>
       t.replace(/[\r\n]+/g, " ").trim(),
     );
