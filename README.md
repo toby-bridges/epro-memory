@@ -1,3 +1,7 @@
+> ⚠️ **ARCHIVED** — This project is no longer maintained. Memory solution replaced by openclaw built-in memory-core.
+
+---
+
 [中文](README.zh-CN.md) | **English**
 
 # epro-memory
