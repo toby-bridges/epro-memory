@@ -1,4 +1,4 @@
-> ⚠️ **ARCHIVED** — This project is no longer maintained. Memory solution replaced by openclaw built-in memory-core.
+> ⚠️ **NOT MAINTAINED** — This project is no longer maintained. Development has stopped and no further updates will be made. Memory solution replaced by openclaw built-in memory-core.
 
 ---
 
